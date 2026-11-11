@@ -36,10 +36,7 @@ async fn start() -> Server {
     cfg.web_dir = web.path().to_path_buf();
     cfg.job_timeout = Duration::from_secs(5);
     let store = Store::memory().await;
-    let state = AppState {
-        cfg: Arc::new(cfg),
-        store: store.clone(),
-    };
+    let state = AppState::new(Arc::new(cfg), store.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });

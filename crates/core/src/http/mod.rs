@@ -13,6 +13,8 @@ use axum::response::{IntoResponse, Response};
 use reclip_shared::{ApiError, ErrorCode};
 use serde::de::DeserializeOwned;
 
+use crate::jobs::ManagerError;
+
 /// Newtype so `ApiError` (defined in `reclip-shared`) can be an axum response.
 #[derive(Debug)]
 pub struct HttpError(pub ApiError);
@@ -52,6 +54,15 @@ pub fn not_found(message: &str) -> Response {
 
 pub async fn api_not_found() -> Response {
     not_found("Unknown API route")
+}
+
+impl IntoResponse for ManagerError {
+    fn into_response(self) -> Response {
+        match self {
+            ManagerError::NotFound => not_found("Job not found"),
+            ManagerError::Api(e) => HttpError(e).into_response(),
+        }
+    }
 }
 
 /// JSON body extractor whose rejection is our `invalid_request` error.

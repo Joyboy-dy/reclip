@@ -83,6 +83,15 @@ const PROGRESS_TEMPLATE: &str = "download:[reclip] %(progress.downloaded_bytes)s
     %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s \
     %(progress.eta)s";
 
+/// The `-f` selector of a download; `None` for mp3 (audio extraction).
+pub fn format_selector(format: MediaFormat, format_id: Option<&str>) -> Option<String> {
+    match (format, format_id) {
+        (MediaFormat::Mp3, _) => None,
+        (MediaFormat::Mp4, Some(id)) => Some(format!("{id}+bestaudio/best")),
+        (MediaFormat::Mp4, None) => Some("bestvideo+bestaudio/best".into()),
+    }
+}
+
 pub fn download_args(
     out_template: &str,
     format: MediaFormat,
@@ -101,23 +110,14 @@ pub fn download_args(
     ]
     .map(String::from)
     .to_vec();
-    match (format, format_id) {
-        (MediaFormat::Mp3, _) => a.extend(["-x", "--audio-format", "mp3"].map(String::from)),
-        (MediaFormat::Mp4, Some(id)) => a.extend([
+    match format_selector(format, format_id) {
+        None => a.extend(["-x", "--audio-format", "mp3"].map(String::from)),
+        Some(selector) => a.extend([
             "-f".into(),
-            format!("{id}+bestaudio/best"),
+            selector,
             "--merge-output-format".into(),
             "mp4".into(),
         ]),
-        (MediaFormat::Mp4, None) => a.extend(
-            [
-                "-f",
-                "bestvideo+bestaudio/best",
-                "--merge-output-format",
-                "mp4",
-            ]
-            .map(String::from),
-        ),
     }
     a.extend([
         "--max-filesize".into(),

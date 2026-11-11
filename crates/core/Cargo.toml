@@ -43,4 +43,4 @@ libc = "0.2"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "cookies"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "test-util"] }

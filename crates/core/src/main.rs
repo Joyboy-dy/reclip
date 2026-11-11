@@ -28,10 +28,8 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.downloads_dir).context("create downloads dir")?;
     let store = Store::open(&cfg.data_dir.join("reclip.db")).await?;
     let addr = format!("{}:{}", cfg.host, cfg.port);
-    let state = AppState {
-        cfg: Arc::new(cfg),
-        store,
-    };
+    let state = AppState::new(Arc::new(cfg), store);
+    let jobs = state.jobs.clone();
     let app = router(state).layer(
         TraceLayer::new_for_http()
             .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -44,6 +42,8 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    // Stop running downloads through their tokens (never by dropping them).
+    jobs.shutdown().await;
     tracing::info!("shut down");
     Ok(())
 }

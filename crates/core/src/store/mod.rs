@@ -35,7 +35,8 @@ fn from_wire<T: DeserializeOwned>(s: &str) -> Result<T> {
         .with_context(|| format!("unknown wire value {s:?}"))
 }
 
-fn is_terminal(state: JobState) -> bool {
+/// `done`, `cancelled`, `failed` and `expired`: no further work happens.
+pub fn is_terminal(state: JobState) -> bool {
     matches!(
         state,
         JobState::Done | JobState::Cancelled | JobState::Failed | JobState::Expired
@@ -48,7 +49,20 @@ fn is_terminal(state: JobState) -> bool {
 /// `created_at`), which is only correct when every value is UTC and uses this
 /// exact format. Use this function for every timestamp written to the store.
 pub fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    timestamp(chrono::Utc::now())
+}
+
+/// [`now`] plus `d`, in the same format (saturating far in the future).
+pub fn now_plus(d: std::time::Duration) -> String {
+    let at = chrono::TimeDelta::from_std(d)
+        .ok()
+        .and_then(|d| chrono::Utc::now().checked_add_signed(d))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    timestamp(at)
+}
+
+fn timestamp(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn row_to_job(row: &SqliteRow) -> Result<Job> {

@@ -8,12 +8,21 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::Config;
 use crate::http;
+use crate::jobs::JobManager;
 use crate::store::Store;
 
 #[derive(Clone)]
 pub struct AppState {
     pub cfg: Arc<Config>,
     pub store: Store,
+    pub jobs: JobManager,
+}
+
+impl AppState {
+    pub fn new(cfg: Arc<Config>, store: Store) -> AppState {
+        let jobs = JobManager::new(cfg.clone(), store.clone());
+        AppState { cfg, store, jobs }
+    }
 }
 
 pub fn router(state: AppState) -> Router {
