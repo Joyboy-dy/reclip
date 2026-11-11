@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # Also guards that web/src/types.gen.ts is up to date: the export test
+      # fails when the generated file is stale.
+      - run: cargo test --workspace
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [rust, web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose -f deploy/compose.yaml config --quiet
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/core.Dockerfile
+          load: true
+          push: false
+          tags: reclip-core:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check image size (uncompressed, max 800 MB)
+        run: |
+          size=$(docker image inspect reclip-core:ci --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MB"
+          if [ "$size" -gt 838860800 ]; then
+            echo "::error::Image is larger than 800 MB"
+            exit 1
+          fi
