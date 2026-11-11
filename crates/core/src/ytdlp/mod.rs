@@ -3,4 +3,6 @@
 pub mod args;
 pub mod errors;
 pub mod parse;
+pub mod process;
+pub mod progress;
 pub mod runner;

@@ -77,7 +77,17 @@ async fn download(
 ) -> Result<(String, u64), ApiError> {
     let io_err = |e: std::io::Error| internal(e).0;
     tokio::fs::create_dir_all(dir).await.map_err(io_err)?;
-    let path = runner::download(&state.cfg, dir, job.format, format_id, &job.url).await?;
+    // Progress and cancellation are wired by the job manager (next task).
+    let path = runner::download(
+        &state.cfg,
+        dir,
+        job.format,
+        format_id,
+        &job.url,
+        |_| {},
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await?;
     let size = tokio::fs::metadata(&path).await.map_err(io_err)?.len();
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let filename = safe_filename(job.title.as_deref().unwrap_or(""), ext, &job.id);

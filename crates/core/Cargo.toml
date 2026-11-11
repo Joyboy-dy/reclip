@@ -36,6 +36,10 @@ uuid = { version = "1", features = ["v7"] }
 percent-encoding = "2"
 getrandom = "0.3"
 tower = { version = "0.5", features = ["util"] }
+tokio-util = "0.7"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "cookies"] }

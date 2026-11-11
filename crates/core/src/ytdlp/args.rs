@@ -78,6 +78,11 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
     }
 }
 
+/// One parsable line per progress update, read by `progress::parse_line`.
+const PROGRESS_TEMPLATE: &str = "download:[reclip] %(progress.downloaded_bytes)s \
+    %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s \
+    %(progress.eta)s";
+
 pub fn download_args(
     out_template: &str,
     format: MediaFormat,
@@ -86,9 +91,16 @@ pub fn download_args(
     max_duration: u64,
     url: &str,
 ) -> Vec<String> {
-    let mut a: Vec<String> = ["--no-playlist", "--newline", "-o", out_template]
-        .map(String::from)
-        .to_vec();
+    let mut a: Vec<String> = [
+        "--no-playlist",
+        "--newline",
+        "-o",
+        out_template,
+        "--progress-template",
+        PROGRESS_TEMPLATE,
+    ]
+    .map(String::from)
+    .to_vec();
     match (format, format_id) {
         (MediaFormat::Mp3, _) => a.extend(["-x", "--audio-format", "mp3"].map(String::from)),
         (MediaFormat::Mp4, Some(id)) => a.extend([
@@ -236,6 +248,16 @@ mod tests {
         let n = a.len();
         assert_eq!(a[n - 2], "--");
         assert_eq!(a[n - 1], "u");
+    }
+    #[test]
+    fn download_args_ask_for_parsable_progress() {
+        let a = download_args("o", MediaFormat::Mp4, None, "2G", 1, "u");
+        assert!(a.windows(2).any(|w| w
+            == [
+                "--progress-template",
+                "download:[reclip] %(progress.downloaded_bytes)s %(progress.total_bytes)s \
+                 %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s"
+            ]));
     }
     #[test]
     fn download_args_reject_live_streams() {

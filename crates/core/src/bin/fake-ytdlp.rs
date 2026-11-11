@@ -1,7 +1,14 @@
 //! Test double for yt-dlp, driven by the URL (last argument).
 
+use std::io::Write;
 use std::process::exit;
 use std::time::Duration;
+
+/// One line in the `--progress-template` format (`NA` for missing values).
+fn progress(downloaded: &str, total: &str, estimate: &str, speed: &str, eta: &str) {
+    println!("[reclip] {downloaded} {total} {estimate} {speed} {eta}");
+    std::io::stdout().flush().unwrap();
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -19,7 +26,30 @@ fn main() {
         exit(1);
     }
     if url.contains("slow") {
-        std::thread::sleep(Duration::from_secs(30));
+        for i in 0..300u32 {
+            progress(
+                &i.to_string(),
+                "NA",
+                "300000.0",
+                "1000.0",
+                &(300 - i).to_string(),
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        return;
+    }
+    #[cfg(unix)]
+    if url.contains("spawns-child") {
+        let template = value("-o").expect("-o template");
+        let dir = std::path::Path::new(&template).parent().unwrap().to_owned();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let tmp = dir.join("child.pid.tmp");
+        std::fs::write(&tmp, child.id().to_string()).unwrap();
+        std::fs::rename(tmp, dir.join("child.pid")).unwrap();
+        let _ = child.wait();
         return;
     }
     if url.contains("too-large") {
@@ -73,7 +103,16 @@ fn main() {
         return;
     }
     if let Some(template) = value("-o") {
-        let ext = if flag("-x") { "mp3" } else { "mp4" };
-        std::fs::write(template.replace("%(ext)s", ext), "fake media").unwrap();
+        for done in [200, 400, 600, 800, 1000] {
+            progress(&done.to_string(), "1000", "NA", "NA", "NA");
+        }
+        let (ext, post) = if flag("-x") {
+            ("mp3", "[ExtractAudio] Destination: ")
+        } else {
+            ("mp4", "[Merger] Merging formats into ")
+        };
+        let path = template.replace("%(ext)s", ext);
+        println!("{post}\"{path}\"");
+        std::fs::write(path, "fake media").unwrap();
     }
 }
