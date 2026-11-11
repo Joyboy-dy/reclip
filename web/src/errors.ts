@@ -8,7 +8,7 @@ const TEXTS: Partial<Record<ErrorCode, string>> = {
   geo_blocked: "Video not available in your region",
   timeout: "Request timed out — try again",
   too_large: "File is too large to download",
-  too_long: "Video is too long to download",
+  too_long: "Video is too long or is a live stream",
   cancelled: "Download cancelled",
   rate_limited: "Too many requests — try again in a moment",
 };
@@ -18,6 +18,10 @@ export function friendlyError(code: ErrorCode | undefined, message: string): str
   if (code === "bot_check" || code === "invalid_request") return message;
   const text = code ? TEXTS[code] : undefined;
   if (text) return text;
+  if (code === "internal") {
+    if (message.includes("HTTP Error 403")) return "Access denied by the platform";
+    if (/copyright/i.test(message)) return "Video blocked due to copyright";
+  }
   return message.length > 80 ? message.slice(0, 80) + "..." : message;
 }
 

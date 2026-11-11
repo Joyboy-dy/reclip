@@ -20,3 +20,16 @@ test("cancelled job without error maps through the state", () => {
   expect(jobError(job)).toBe("Download cancelled");
   expect(jobError({ ...job, state: "expired" })).toBe("File expired — download it again");
 });
+
+test("internal 403 and copyright errors get friendly texts", () => {
+  expect(friendlyError("internal", "ERROR: HTTP Error 403: Forbidden")).toBe(
+    "Access denied by the platform",
+  );
+  expect(friendlyError("internal", "Blocked: Copyright claim by X")).toBe(
+    "Video blocked due to copyright",
+  );
+});
+
+test("too_long text mentions live streams", () => {
+  expect(friendlyError("too_long", "raw")).toBe("Video is too long or is a live stream");
+});
