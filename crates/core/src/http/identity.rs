@@ -5,7 +5,7 @@
 //! so legacy rows with owner `''` stay unreachable.
 
 use axum::extract::{FromRequestParts, Request};
-use axum::http::header::{COOKIE, SET_COOKIE};
+use axum::http::header::{CACHE_CONTROL, COOKIE, SET_COOKIE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue};
 use axum::middleware::Next;
@@ -70,6 +70,9 @@ pub async fn identity_layer(mut req: Request, next: Next) -> Response {
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
     req.extensions_mut().insert(Owner(format!("web:{value}")));
     let mut res = next.run(req).await;
+    // Responses are per visitor: never let a shared cache keep them.
+    res.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     if minted {
         let secure = if secure { "; Secure" } else { "" };
         let c = format!(

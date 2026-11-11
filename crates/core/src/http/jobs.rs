@@ -33,3 +33,20 @@ pub async fn get_job(
 ) -> Result<Json<Job>, ManagerError> {
     Ok(Json(s.jobs.get(&owner, &id).await?))
 }
+
+pub async fn cancel(
+    State(s): State<AppState>,
+    Owner(owner): Owner,
+    Path(id): Path<String>,
+) -> Result<Json<Job>, ManagerError> {
+    Ok(Json(s.jobs.cancel(&owner, &id).await?))
+}
+
+pub async fn delete_job(
+    State(s): State<AppState>,
+    Owner(owner): Owner,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ManagerError> {
+    s.jobs.delete(&owner, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

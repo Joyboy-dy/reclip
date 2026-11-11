@@ -35,7 +35,12 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/jobs",
             get(http::jobs::list).post(http::jobs::create),
         )
-        .route("/api/v1/jobs/{id}", get(http::jobs::get_job))
+        .route(
+            "/api/v1/jobs/{id}",
+            get(http::jobs::get_job).delete(http::jobs::delete_job),
+        )
+        .route("/api/v1/jobs/{id}/events", get(http::events::events))
+        .route("/api/v1/jobs/{id}/cancel", post(http::jobs::cancel))
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn(http::identity::identity_layer));
