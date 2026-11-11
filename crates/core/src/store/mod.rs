@@ -54,11 +54,24 @@ pub fn now() -> String {
 
 /// [`now`] plus `d`, in the same format (saturating far in the future).
 pub fn now_plus(d: std::time::Duration) -> String {
-    let at = chrono::TimeDelta::from_std(d)
+    timestamp(plus(chrono::Utc::now(), d))
+}
+
+/// `at + d`, saturating far in the future.
+fn plus(
+    at: chrono::DateTime<chrono::Utc>,
+    d: std::time::Duration,
+) -> chrono::DateTime<chrono::Utc> {
+    chrono::TimeDelta::from_std(d)
         .ok()
-        .and_then(|d| chrono::Utc::now().checked_add_signed(d))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
-    timestamp(at)
+        .and_then(|d| at.checked_add_signed(d))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
+}
+
+/// `finished_at` and `expires_at = finished_at + ttl`, from one instant.
+fn finished_and_expiry(ttl: std::time::Duration) -> (String, String) {
+    let at = chrono::Utc::now();
+    (timestamp(at), timestamp(plus(at, ttl)))
 }
 
 /// [`now`] minus `d`, in the same format.
@@ -210,6 +223,45 @@ impl Store {
         .await?;
         anyhow::ensure!(res.rows_affected() == 1, "job not found: {id}");
         Ok(())
+    }
+
+    /// Record a terminal outcome: same `filename` / `size` / `error` rules as
+    /// [`Store::set_state`], with `finished_at = now` and
+    /// `expires_at = finished_at + ttl` in the same update, so a finished
+    /// row never lacks an expiry. Returns `expires_at`.
+    pub async fn set_finished(
+        &self,
+        id: &str,
+        state: JobState,
+        filename: Option<&str>,
+        size: Option<u64>,
+        error: Option<&ApiError>,
+        ttl: std::time::Duration,
+    ) -> Result<String> {
+        anyhow::ensure!(is_terminal(state), "not a terminal state");
+        let (finished_at, expires_at) = finished_and_expiry(ttl);
+        let res = sqlx::query(
+            "UPDATE jobs SET state = ?, \
+             filename = COALESCE(?, filename), \
+             size = COALESCE(?, size), \
+             error_code = ?, \
+             error_message = ?, \
+             finished_at = ?, \
+             expires_at = ? \
+             WHERE id = ?",
+        )
+        .bind(to_wire(&state)?)
+        .bind(filename)
+        .bind(size.map(|n| n as i64))
+        .bind(error.map(|e| to_wire(&e.code)).transpose()?)
+        .bind(error.map(|e| e.message.as_str()))
+        .bind(finished_at)
+        .bind(&expires_at)
+        .bind(id)
+        .execute(&self.0)
+        .await?;
+        anyhow::ensure!(res.rows_affected() == 1, "job not found: {id}");
+        Ok(expires_at)
     }
 
     pub async fn file_path(&self, id: &str) -> Result<Option<PathBuf>> {

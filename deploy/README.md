@@ -12,6 +12,7 @@ docker compose -f deploy/compose.yaml up --build
 
 Ouvrez <http://localhost:8899>. Pour un autre port hôte : `RECLIP_PORT=18900 docker compose -f deploy/compose.yaml up --build`.
 Les téléchargements et la base SQLite sont dans le volume nommé `data` (`/data` dans le conteneur).
+Le dossier des téléchargements appartient à ReClip : au démarrage, il supprime les dossiers de tâches (32 caractères hexadécimaux) qu'il ne connaît plus. Ne le partagez pas avec d'autres fichiers.
 Pour tout supprimer : `docker compose -f deploy/compose.yaml down -v`.
 
 ## Dokploy

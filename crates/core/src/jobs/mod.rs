@@ -196,13 +196,15 @@ impl JobManager {
         let stored = self.owned(owner, id).await?;
         match self.detach(id) {
             Tracked::Dequeued => {
-                let store = self.store();
-                store
-                    .set_state(id, JobState::Cancelled, None, None, None)
+                let ttl = self.config().file_ttl;
+                let expires_at = self
+                    .store()
+                    .set_finished(id, JobState::Cancelled, None, None, None, ttl)
                     .await
                     .map_err(internal)?;
                 let job = Job {
                     state: JobState::Cancelled,
+                    expires_at: Some(expires_at),
                     ..stored
                 };
                 self.hub().publish(job.clone());

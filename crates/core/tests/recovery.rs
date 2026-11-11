@@ -8,7 +8,7 @@ use reclip_core::app::{AppState, router};
 use reclip_core::config::Config;
 use reclip_core::jobs::{JobManager, cleanup, recovery};
 use reclip_core::store::Store;
-use reclip_shared::{ErrorCode, Job, JobState, MediaFormat};
+use reclip_shared::{CreateJobRequest, ErrorCode, Job, JobState, MediaFormat};
 use serde_json::{Value, json};
 
 const OWNER: &str = "web:0123456789abcdef0123456789abcdef";
@@ -96,21 +96,33 @@ async fn recover_fails_running_and_requeues_queued() {
 async fn recover_removes_orphan_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::memory().await;
+    let done = "0190f5c2a1b47c3d8e9f00112233aa01";
+    let orphans = [
+        "0190f5c2a1b47c3d8e9f00112233aa02",
+        "0190f5c2a1b47c3d8e9f00112233aa03",
+    ];
     store
-        .insert(&job("done1", JobState::Done, None), OWNER)
+        .insert(&job(done, JobState::Done, None), OWNER)
         .await
         .unwrap();
-    make_dir(dir.path(), "done1");
-    make_dir(dir.path(), "orphan1");
-    make_dir(dir.path(), "orphan2");
+    make_dir(dir.path(), done);
+    for orphan in orphans {
+        make_dir(dir.path(), orphan);
+    }
+    // Not job-shaped: someone else's data, never touched.
+    make_dir(dir.path(), "my-videos");
+    make_dir(dir.path(), "0190F5C2A1B47C3D8E9F00112233AA04");
     std::fs::write(dir.path().join("stray.txt"), "keep").unwrap();
     let mgr = JobManager::new(Arc::new(config(dir.path())), store);
 
     let report = recovery::recover(&mgr).await.unwrap();
     assert_eq!(report.orphan_dirs, 2);
-    assert!(dir.path().join("done1/partial.part").exists());
-    assert!(!dir.path().join("orphan1").exists());
-    assert!(!dir.path().join("orphan2").exists());
+    assert!(dir.path().join(done).join("partial.part").exists());
+    for orphan in orphans {
+        assert!(!dir.path().join(orphan).exists());
+    }
+    assert!(dir.path().join("my-videos/partial.part").exists());
+    assert!(dir.path().join("0190F5C2A1B47C3D8E9F00112233AA04").exists());
     assert!(dir.path().join("stray.txt").exists());
     mgr.shutdown().await;
 }
@@ -160,4 +172,59 @@ async fn cleanup_expires_and_deletes_files() {
         .await
         .expect("cleanup stops on shutdown")
         .unwrap();
+}
+
+#[tokio::test]
+async fn failed_and_cancelled_jobs_expire_then_purge() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = config(dir.path());
+    cfg.file_ttl = Duration::from_secs(1);
+    let store = Store::memory().await;
+    let mgr = JobManager::new(Arc::new(cfg), store.clone());
+    let req = |url: &str| CreateJobRequest {
+        url: url.into(),
+        format: MediaFormat::Mp4,
+        format_id: None,
+        title: None,
+        thumbnail: None,
+    };
+    let failed = mgr
+        .create(OWNER, req("https://error-bot.example/v"))
+        .await
+        .unwrap()
+        .id;
+    let cancelled = mgr
+        .create(OWNER, req("https://slow.example/v"))
+        .await
+        .unwrap()
+        .id;
+    wait_for("failed", async || {
+        store.get(&failed).await.unwrap().unwrap().state == JobState::Failed
+    })
+    .await;
+    let job = mgr.cancel(OWNER, &cancelled).await.unwrap();
+    assert_eq!(job.state, JobState::Cancelled);
+    for id in [&failed, &cancelled] {
+        let job = store.get(id).await.unwrap().unwrap();
+        assert!(job.expires_at.is_some(), "{id} has no expiry: {job:?}");
+    }
+
+    // Not due yet.
+    cleanup::sweep(&mgr).await.unwrap();
+    assert_eq!(
+        store.get(&failed).await.unwrap().unwrap().state,
+        JobState::Failed
+    );
+    wait_for("expired", async || {
+        cleanup::sweep(&mgr).await.unwrap();
+        let f = store.get(&failed).await.unwrap().unwrap().state;
+        let c = store.get(&cancelled).await.unwrap().unwrap().state;
+        f == JobState::Expired && c == JobState::Expired
+    })
+    .await;
+    let later = reclip_core::store::now_plus(Duration::from_secs(60));
+    assert_eq!(store.purge_expired(&later).await.unwrap(), 2);
+    assert_eq!(store.get(&failed).await.unwrap(), None);
+    assert_eq!(store.get(&cancelled).await.unwrap(), None);
+    mgr.shutdown().await;
 }

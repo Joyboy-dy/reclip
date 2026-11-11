@@ -58,6 +58,8 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
 
+The downloads directory belongs to ReClip: at startup it deletes the job folders (32 hex characters) it no longer knows, so give it a dedicated folder.
+
 ### YouTube on a server
 
 YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. To get past it:

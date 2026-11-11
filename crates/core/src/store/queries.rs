@@ -4,13 +4,14 @@
 //! (UTC, millisecond RFC 3339 with `Z`), since SQL compares them as strings.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use reclip_shared::api::Job;
 use reclip_shared::errors::ErrorCode;
 use sqlx::Row;
 
-use super::{COLUMNS, Store, now, row_to_job, to_wire};
+use super::{COLUMNS, Store, finished_and_expiry, now, row_to_job, to_wire};
 
 impl Store {
     /// A job, only if it belongs to `owner`.
@@ -75,16 +76,20 @@ impl Store {
         )
     }
 
-    /// Fail every `downloading`/`processing` job (server restart recovery).
-    /// Returns the affected ids.
-    pub async fn mark_interrupted(&self) -> Result<Vec<String>> {
+    /// Fail every `downloading`/`processing` job (server restart recovery),
+    /// expiring `ttl` after now like any other finished job. Returns the
+    /// affected ids.
+    pub async fn mark_interrupted(&self, ttl: Duration) -> Result<Vec<String>> {
+        let (finished_at, expires_at) = finished_and_expiry(ttl);
         let ids = sqlx::query_scalar(
             "UPDATE jobs SET state = 'failed', error_code = ?, error_message = ?, \
-             finished_at = ? WHERE state IN ('downloading', 'processing') RETURNING id",
+             finished_at = ?, expires_at = ? \
+             WHERE state IN ('downloading', 'processing') RETURNING id",
         )
         .bind(to_wire(&ErrorCode::Interrupted)?)
         .bind("Interrupted by a server restart")
-        .bind(now())
+        .bind(finished_at)
+        .bind(expires_at)
         .fetch_all(&self.0)
         .await?;
         Ok(ids)
@@ -99,12 +104,14 @@ impl Store {
         Ok(())
     }
 
-    /// Move `done` jobs with `expires_at <= now` to `expired`, clearing their
-    /// file path. Returns each id with its previous path.
+    /// Move `done`, `failed` and `cancelled` jobs with `expires_at <= now` to
+    /// `expired`, clearing their file path. Returns each id with its previous
+    /// path (only a `done` job has one: the others' directories are removed
+    /// when they finish).
     pub async fn expire_due(&self, now_ts: &str) -> Result<Vec<(String, Option<PathBuf>)>> {
         let mut tx = self.0.begin().await?;
         let due: Vec<(String, Option<String>)> = sqlx::query_as(
-            "SELECT id, file_path FROM jobs WHERE state = 'done' \
+            "SELECT id, file_path FROM jobs WHERE state IN ('done', 'failed', 'cancelled') \
              AND expires_at IS NOT NULL AND expires_at <= ?",
         )
         .bind(now_ts)

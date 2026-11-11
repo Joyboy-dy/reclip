@@ -12,7 +12,8 @@ pub struct RecoveryReport {
     pub interrupted: usize,
     /// Queued jobs put back in the queue.
     pub requeued: usize,
-    /// Directories in `downloads_dir` matching no `queued`/`done` job.
+    /// Job-shaped directories in `downloads_dir` matching no `queued`/`done`
+    /// job.
     pub orphan_dirs: usize,
 }
 
@@ -29,15 +30,17 @@ pub(super) async fn remove_dir(dir: &Path) -> std::io::Result<()> {
 ///
 /// Order: fail running jobs and delete their directories, requeue `queued`
 /// jobs (owner and `format_id` kept), then delete every direct child
-/// directory of `downloads_dir` that is not a `queued` or `done` job. The
-/// keep-set is computed before requeueing, so a worker that already started
-/// on a requeued job never loses its directory. Symlinks are not followed
-/// and plain files are left alone.
+/// directory of `downloads_dir` that is named like a job (see
+/// [`is_job_dir_name`]) but is not a `queued` or `done` job. The keep-set is
+/// computed before requeueing, so a worker that already started on a
+/// requeued job never loses its directory. Symlinks are not followed, plain
+/// files and directories with any other name are left alone:
+/// `RECLIP_DOWNLOADS_DIR` may point at a folder that holds other things.
 pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
     let store = manager.store();
     let root = &manager.config().downloads_dir;
 
-    let interrupted = store.mark_interrupted().await?;
+    let interrupted = store.mark_interrupted(manager.config().file_ttl).await?;
     for id in &interrupted {
         if let Err(e) = remove_dir(&root.join(id)).await {
             tracing::warn!(job = %id, error = %e, "cannot remove interrupted job dir");
@@ -60,6 +63,11 @@ pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
     })
 }
 
+/// A job id: 32 lowercase hex characters (a simple-format UUID).
+fn is_job_dir_name(name: &str) -> bool {
+    name.len() == 32 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 async fn remove_orphans(root: &Path, keep: &HashSet<String>) -> anyhow::Result<usize> {
     let mut removed = 0;
     let mut entries = match tokio::fs::read_dir(root).await {
@@ -72,7 +80,11 @@ async fn remove_orphans(root: &Path, keep: &HashSet<String>) -> anyhow::Result<u
         if !entry.file_type().await.is_ok_and(|t| t.is_dir()) {
             continue;
         }
-        if entry.file_name().to_str().is_some_and(|n| keep.contains(n)) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|n| is_job_dir_name(n)) else {
+            continue;
+        };
+        if keep.contains(name) {
             continue;
         }
         match remove_dir(&entry.path()).await {
@@ -83,4 +95,19 @@ async fn remove_orphans(root: &Path, keep: &HashSet<String>) -> anyhow::Result<u
         }
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_job_dir_name;
+
+    #[test]
+    fn job_dir_names_are_32_lowercase_hex() {
+        assert!(is_job_dir_name("0190f5c2a1b47c3d8e9f00112233aabb"));
+        assert!(!is_job_dir_name("0190F5C2A1B47C3D8E9F00112233AABB"));
+        assert!(!is_job_dir_name("0190f5c2a1b47c3d8e9f00112233aab"));
+        assert!(!is_job_dir_name("0190f5c2a1b47c3d8e9f00112233aabbc"));
+        assert!(!is_job_dir_name("0190f5c2-a1b4-7c3d-8e9f-00112233"));
+        assert!(!is_job_dir_name("my-videos"));
+    }
 }

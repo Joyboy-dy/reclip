@@ -1,5 +1,5 @@
 //! Runs one job: `downloading` with live progress, `processing`, then `done`
-//! (with an expiry) or `failed`/`cancelled` (directory removed).
+//! or `failed`/`cancelled` (directory removed), each with an expiry.
 
 use std::path::Path;
 
@@ -52,9 +52,10 @@ async fn record_crash(mgr: &JobManager, id: &str) {
         code: ErrorCode::Internal,
         message: "Job crashed".into(),
     };
+    let ttl = mgr.config().file_ttl;
     let res = mgr
         .store()
-        .set_state(id, JobState::Failed, None, None, Some(&error))
+        .set_finished(id, JobState::Failed, None, None, Some(&error), ttl)
         .await;
     if let Err(e) = res {
         tracing::error!(job = %id, error = %e, "cannot record job crash");
@@ -177,33 +178,20 @@ async fn apply(mgr: &JobManager, live: &mut Job, tracker: &mut ProgressTracker, 
     mgr.hub().publish(live.clone());
 }
 
-/// Persist the outcome, then publish it (the hub drops finished jobs, so the
-/// store must be up to date first).
+/// Persist the outcome with its expiry, then publish it (the hub drops
+/// finished jobs, so the store must be up to date first).
 async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String, u64), ApiError>) {
-    let store = mgr.store();
     let mut done = Job {
         progress: None,
         speed: None,
         eta: None,
         ..job
     };
-    let written = match outcome {
+    match outcome {
         Ok((filename, size)) => {
-            let expires_at = crate::store::now_plus(mgr.config().file_ttl);
             done.state = JobState::Done;
             done.filename = Some(filename);
             done.size = Some(size);
-            done.expires_at = Some(expires_at.clone());
-            // Expiry first: a `done` row never lacks one.
-            match store.set_expires_at(&done.id, &expires_at).await {
-                Ok(()) => {
-                    let name = done.filename.as_deref();
-                    store
-                        .set_state(&done.id, JobState::Done, name, Some(size), None)
-                        .await
-                }
-                Err(e) => Err(e),
-            }
         }
         Err(err) => {
             remove_dir(&done.id, dir).await;
@@ -214,13 +202,20 @@ async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String,
             };
             done.state = state;
             done.error = error;
-            store
-                .set_state(&done.id, state, None, None, done.error.as_ref())
-                .await
         }
+    }
+    let (name, size) = match done.state {
+        JobState::Done => (done.filename.as_deref(), done.size),
+        _ => (None, None),
     };
-    if let Err(e) = written {
-        tracing::error!(job = %done.id, error = %e, "cannot record job result");
+    let ttl = mgr.config().file_ttl;
+    let written = mgr
+        .store()
+        .set_finished(&done.id, done.state, name, size, done.error.as_ref(), ttl)
+        .await;
+    match written {
+        Ok(expires_at) => done.expires_at = Some(expires_at),
+        Err(e) => tracing::error!(job = %done.id, error = %e, "cannot record job result"),
     }
     mgr.hub().publish(done);
 }

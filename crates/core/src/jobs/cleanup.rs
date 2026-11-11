@@ -37,8 +37,9 @@ pub fn spawn_cleanup(manager: JobManager) -> JoinHandle<()> {
     })
 }
 
-/// Expire due `done` jobs (delete their directories, publish the `expired`
-/// job) and purge `expired` rows older than seven days.
+/// Expire due `done`, `failed` and `cancelled` jobs (delete their
+/// directories, publish the `expired` job) and purge `expired` rows older
+/// than seven days.
 pub async fn sweep(manager: &JobManager) -> anyhow::Result<()> {
     let store = manager.store();
     let root = &manager.config().downloads_dir;

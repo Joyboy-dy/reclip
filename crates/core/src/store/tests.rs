@@ -2,6 +2,14 @@ use super::Store;
 use reclip_shared::api::{Job, JobState, MediaFormat};
 use reclip_shared::errors::{ApiError, ErrorCode};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// `ts` (a store timestamp) plus one hour, in the store format.
+fn plus_hour(ts: &str) -> String {
+    let at = chrono::DateTime::parse_from_rfc3339(ts).unwrap() + chrono::TimeDelta::hours(1);
+    at.with_timezone(&chrono::Utc)
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
 
 fn sample(id: &str) -> Job {
     Job {
@@ -248,7 +256,10 @@ async fn mark_interrupted_fails_running_jobs() {
         j.state = st;
         store.insert(&j, "web:a").await.unwrap();
     }
-    let mut ids = store.mark_interrupted().await.unwrap();
+    let mut ids = store
+        .mark_interrupted(Duration::from_secs(3600))
+        .await
+        .unwrap();
     ids.sort();
     assert_eq!(ids, ["d", "p"]);
     for id in ["d", "p"] {
@@ -257,7 +268,8 @@ async fn mark_interrupted_fails_running_jobs() {
         let e = j.error.unwrap();
         assert_eq!(e.code, ErrorCode::Interrupted);
         assert_eq!(e.message, "Interrupted by a server restart");
-        assert!(store.finished_at(id).await.is_some());
+        let finished = store.finished_at(id).await.unwrap();
+        assert_eq!(j.expires_at.unwrap(), plus_hour(&finished));
     }
     assert_eq!(
         store.get("q").await.unwrap().unwrap().state,
@@ -360,3 +372,85 @@ async fn requeue_clears_finished_at() {
         .unwrap();
     assert!(store.finished_at("j1").await.is_none());
 }
+
+#[tokio::test]
+async fn set_finished_stamps_expiry_from_finished_at() {
+    let store = Store::memory().await;
+    store
+        .insert(&plain("j1", "2026-11-11T10:00:00.000Z"), "web:a")
+        .await
+        .unwrap();
+    let err = ApiError {
+        code: ErrorCode::Unavailable,
+        message: "gone".into(),
+    };
+    let at = store
+        .set_finished(
+            "j1",
+            JobState::Failed,
+            None,
+            None,
+            Some(&err),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let j = store.get("j1").await.unwrap().unwrap();
+    assert_eq!(j.state, JobState::Failed);
+    assert_eq!(j.error.unwrap().code, ErrorCode::Unavailable);
+    assert_eq!(j.expires_at.as_deref(), Some(at.as_str()));
+    assert_eq!(at, plus_hour(&store.finished_at("j1").await.unwrap()));
+    assert!(
+        store
+            .set_finished("j1", JobState::Queued, None, None, None, Duration::ZERO)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn expire_due_covers_failed_and_cancelled() {
+    let store = Store::memory().await;
+    for (id, state) in [
+        ("f", JobState::Failed),
+        ("c", JobState::Cancelled),
+        ("q", JobState::Queued),
+        ("d", JobState::Downloading),
+    ] {
+        let mut j = plain(id, "2026-11-11T10:00:00.000Z");
+        j.state = state;
+        store.insert(&j, "web:a").await.unwrap();
+        store
+            .set_expires_at(id, "2026-11-11T11:00:00.000Z")
+            .await
+            .unwrap();
+    }
+    let mut due = store.expire_due("2026-11-11T12:00:00.000Z").await.unwrap();
+    due.sort();
+    assert_eq!(due, [("c".to_string(), None), ("f".to_string(), None)]);
+    for id in ["f", "c"] {
+        assert_eq!(
+            store.get(id).await.unwrap().unwrap().state,
+            JobState::Expired
+        );
+    }
+    // Live jobs never expire, whatever their expiry says.
+    assert_eq!(
+        store.get("q").await.unwrap().unwrap().state,
+        JobState::Queued
+    );
+    assert_eq!(
+        store.get("d").await.unwrap().unwrap().state,
+        JobState::Downloading
+    );
+    assert_eq!(
+        store
+            .purge_expired("9999-01-01T00:00:00.000Z")
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(store.get("f").await.unwrap(), None);
+    assert_eq!(store.get("c").await.unwrap(), None);
+}
+
