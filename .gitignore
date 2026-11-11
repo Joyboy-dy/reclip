@@ -11,3 +11,4 @@ assets/*.mov
 .pytest_cache/
 # YouTube session cookies: never commit them
 cookies*.txt
+/target
