@@ -25,7 +25,8 @@ fn main() {
         eprintln!("ERROR: [youtube] x: Sign in to confirm you're not a bot.");
         exit(1);
     }
-    if url.contains("slow") {
+    // Only the download is slow; probes (`-j` / `-J`) answer at once.
+    if url.contains("slow") && !flag("-j") && !flag("-J") {
         for i in 0..300u32 {
             progress(
                 &i.to_string(),
