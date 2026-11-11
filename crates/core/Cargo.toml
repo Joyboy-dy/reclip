@@ -18,7 +18,11 @@ path = "src/bin/fake-ytdlp.rs"
 
 [dependencies]
 reclip-shared = { path = "../shared" }
+serde.workspace = true
 serde_json.workspace = true
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 tempfile = "3"
 which = "8"
 tracing = "0.1"
