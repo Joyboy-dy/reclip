@@ -454,3 +454,39 @@ async fn expire_due_covers_failed_and_cancelled() {
     assert_eq!(store.get("c").await.unwrap(), None);
 }
 
+#[tokio::test]
+async fn legacy_expiry_migration_makes_old_done_rows_due() {
+    let store = Store::memory().await;
+    for (id, state, expires_at) in [
+        ("legacy", JobState::Done, None),
+        ("kept", JobState::Done, Some("2099-01-01T00:00:00.000Z")),
+        ("live", JobState::Queued, None),
+    ] {
+        let mut j = plain(id, "2026-11-11T10:00:00.000Z");
+        j.state = state;
+        j.expires_at = expires_at.map(String::from);
+        store.insert(&j, "").await.unwrap();
+    }
+    // Phase-1 rows exist before 0003 runs: replay it over them.
+    sqlx::query(include_str!("../../migrations/0003_legacy_expiry.sql"))
+        .execute(&store.0)
+        .await
+        .unwrap();
+    let at = store
+        .get("legacy")
+        .await
+        .unwrap()
+        .unwrap()
+        .expires_at
+        .unwrap();
+    // Same format as `now()`, so string comparison in SQL stays correct.
+    assert_eq!(at.len(), super::now().len(), "{at}");
+    assert!(at.ends_with('Z') && at.contains('.'), "{at}");
+    assert!(at <= super::now());
+    let kept = store.get("kept").await.unwrap().unwrap().expires_at;
+    assert_eq!(kept.as_deref(), Some("2099-01-01T00:00:00.000Z"));
+    assert_eq!(store.get("live").await.unwrap().unwrap().expires_at, None);
+    let due = store.expire_due(&super::now()).await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].0, "legacy");
+}

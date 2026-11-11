@@ -15,8 +15,9 @@ use tokio::time::Instant;
 
 use crate::store::is_terminal;
 
-/// Buffered updates per job; a slower subscriber gets `Lagged`.
-pub const CHANNEL_CAPACITY: usize = 64;
+/// Buffered updates per job; a slower subscriber gets `Lagged` and the event
+/// stream falls back to a fresh snapshot, so a small buffer loses nothing.
+pub const CHANNEL_CAPACITY: usize = 16;
 /// Minimum gap between two broadcast progress-only updates of one job.
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
 

@@ -3,6 +3,7 @@
 //! The shipped yt-dlp is a PyInstaller one-file launcher that starts Python,
 //! which starts ffmpeg. Killing only the launcher would orphan the others, so
 //! on unix yt-dlp gets its own process group and the whole group is signalled.
+//! It also runs at `nice 10` there (spec §3.3).
 
 use std::collections::VecDeque;
 use std::io;
@@ -12,11 +13,26 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// Spawn `cmd` as the leader of a new process group (unix only; elsewhere a
-/// plain spawn).
+/// Spawn `cmd` as the leader of a new process group at `nice 10` (unix
+/// only; elsewhere a plain spawn).
 pub fn spawn_group(cmd: &mut Command) -> io::Result<Child> {
     #[cfg(unix)]
-    cmd.process_group(0);
+    {
+        cmd.process_group(0);
+        // Spec §3.3: downloads and ffmpeg remuxes are CPU-heavy background
+        // work; at a lower priority they never starve the HTTP server on the
+        // same machine. Everything yt-dlp starts inherits it.
+        // SAFETY: the closure runs in the forked child before exec, where only
+        // async-signal-safe calls are allowed. `setpriority` is a plain system
+        // call (no allocation, no lock). Its error is ignored on purpose: a
+        // child left at the default priority is still a working download.
+        unsafe {
+            cmd.pre_exec(|| {
+                let _ = libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+                Ok(())
+            });
+        }
+    }
     cmd.spawn()
 }
 
@@ -139,6 +155,18 @@ mod tests {
         assert!(took >= Duration::from_millis(300), "{took:?}");
         assert!(took < Duration::from_secs(3), "{took:?}");
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn child_runs_at_nice_10() {
+        let mut cmd = Command::new("nice");
+        cmd.stdout(std::process::Stdio::piped());
+        let out = spawn_group(&mut cmd)
+            .unwrap()
+            .wait_with_output()
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
     }
 
     #[tokio::test]
