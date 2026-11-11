@@ -47,7 +47,7 @@ pub fn video_info(v: &Value) -> VideoInfo {
             })
         })
         .collect();
-    options.sort_by(|a, b| b.height.cmp(&a.height));
+    options.sort_by_key(|o| std::cmp::Reverse(o.height));
     VideoInfo {
         title: text("title").unwrap_or_default(),
         thumbnail: text("thumbnail"),
