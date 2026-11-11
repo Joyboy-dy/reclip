@@ -15,6 +15,10 @@ https://github.com/user-attachments/assets/419d3e50-c933-444b-8cab-a9724986ba05
 - Quality/resolution picker
 - Bulk downloads — paste multiple URLs at once
 - Automatic URL deduplication
+- Live progress for each download, with cancel and remove
+- Cards restored after a page refresh
+- Fair download queue: global and per-site concurrency limits
+- Finished files kept for a set time (`RECLIP_FILE_TTL`), then deleted
 - Clean, responsive UI
 
 ## Quick Start
@@ -47,6 +51,10 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_PLAYLIST_LIMIT` | Maximum number of videos taken from a playlist. | `50` |
 | `RECLIP_MAX_FILESIZE` | Maximum size of a downloaded file (e.g. `500M`, `2G`). | `2G` |
 | `RECLIP_MAX_DURATION` | Maximum video duration, in seconds. | `10800` |
+| `RECLIP_MAX_CONCURRENT` | Downloads running at once, all sites together (minimum 1). | `4` |
+| `RECLIP_MAX_PER_SITE` | Downloads running at once for one site (minimum 1). | `2` |
+| `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `86400` |
+| `RECLIP_CLEANUP_INTERVAL` | Period of the expiry sweep, in seconds. | `600` |
 | `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
 
@@ -69,6 +77,16 @@ YouTube also requires a JavaScript runtime: the Docker image ships Deno. When ru
 3. Click **Fetch** to load video info and thumbnails
 4. Select quality/resolution if available
 5. Click **Download** on individual videos, or **Download All**
+
+Progress updates live. You can cancel a running download or remove a card, and cards come back after a page refresh.
+
+### Using the API
+
+Jobs are attached to an anonymous `reclip_client` cookie set by the server. A script must keep cookies between requests, or it will not see its own jobs:
+
+```bash
+curl -c cookies.txt -b cookies.txt http://localhost:8899/api/v1/jobs
+```
 
 ## Development
 
