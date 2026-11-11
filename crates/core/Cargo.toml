@@ -1,0 +1,25 @@
+[package]
+name = "reclip-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "reclip_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "reclip-core"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-ytdlp"
+path = "src/bin/fake-ytdlp.rs"
+
+[dependencies]
+reclip-shared = { path = "../shared" }
+serde_json.workspace = true
+tempfile = "3"
+which = "8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
