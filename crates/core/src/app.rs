@@ -1,5 +1,6 @@
 //! Router assembly and shared state.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use axum::routing::{any, get, post};
@@ -49,4 +50,28 @@ pub fn router(state: AppState) -> Router {
         .merge(api)
         .fallback_service(web)
         .with_state(state)
+}
+
+/// Serve `app` until `signal` fires, then shut down in the order that lets
+/// the server finish: first the job manager (stops scheduling, stops running
+/// downloads, records them interrupted, and ends every open event stream
+/// through its shutdown token), then axum's graceful shutdown, which waits
+/// for in-flight responses. Without the first step an open event stream
+/// would keep the server alive forever.
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    jobs: JobManager,
+    signal: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    let stop = jobs.clone();
+    let res = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            signal.await;
+            stop.shutdown().await;
+        })
+        .await;
+    // Covers a server error before the signal; a no-op after a normal stop.
+    jobs.shutdown().await;
+    res
 }

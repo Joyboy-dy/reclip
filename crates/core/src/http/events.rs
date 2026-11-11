@@ -1,7 +1,8 @@
 //! `GET /api/v1/jobs/{id}/events`: live job updates as server-sent events.
 //!
 //! Each event is `event: job` with the `Job` JSON as data. The first one is
-//! the current snapshot; the stream ends after a terminal state.
+//! the current snapshot; the stream ends after a terminal state, or when the
+//! server shuts down (graceful shutdown waits for every open response).
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{AppendHeaders, IntoResponse};
-use futures_util::stream::{self, Stream};
+use futures_util::stream::{self, Stream, StreamExt};
 use reclip_shared::{Job, JobState};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 
@@ -78,12 +79,13 @@ pub async fn events(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ManagerError> {
     let sub = s.jobs.subscribe(&owner, &id).await?;
+    let stop = s.jobs.shutdown_token().cancelled_owned();
     let ctx = Ctx {
         jobs: s.jobs.clone(),
         owner,
         id,
     };
-    let body = updates(ctx, Phase::Snapshot(Box::new(sub.snapshot), sub.updates));
+    let body = updates(ctx, Phase::Snapshot(Box::new(sub.snapshot), sub.updates)).take_until(stop);
     let sse = Sse::new(body).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)));
     Ok((
         AppendHeaders([(

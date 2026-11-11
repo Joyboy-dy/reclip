@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use reclip_core::app::{AppState, router};
+use reclip_core::app::{AppState, router, serve};
 use reclip_core::config::Config;
 use reclip_core::healthcheck;
 use reclip_core::jobs::cleanup::spawn_cleanup;
@@ -49,11 +49,9 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("bind {addr}"))?;
     tracing::info!(%addr, "listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-    // Stop running downloads through their tokens (never by dropping them).
-    jobs.shutdown().await;
+    // Stops running downloads through their tokens (never by dropping them)
+    // and ends open event streams before axum waits for connections.
+    serve(listener, app, jobs, shutdown_signal()).await?;
     let _ = cleanup.await;
     tracing::info!("shut down");
     Ok(())

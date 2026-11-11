@@ -4,9 +4,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reclip_core::app::{AppState, router};
+use reclip_core::app::{AppState, router, serve};
 use reclip_core::config::Config;
 use reclip_core::store::Store;
+use reclip_shared::{ErrorCode, JobState};
 use reqwest::Response;
 use serde_json::{Value, json};
 
@@ -287,4 +288,52 @@ async fn api_responses_are_not_cached() {
     let s = start().await;
     let r = s.get("/api/v1/jobs").await;
     assert_eq!(r.headers()["cache-control"], "no-store");
+}
+
+#[tokio::test]
+async fn shutdown_ends_open_event_streams() {
+    let downloads = tempfile::tempdir().unwrap();
+    let web = tempfile::tempdir().unwrap();
+    let mut cfg = Config::from_env(&|_| None);
+    cfg.ytdlp_bin = env!("CARGO_BIN_EXE_fake-ytdlp").to_string();
+    cfg.downloads_dir = downloads.path().to_path_buf();
+    cfg.web_dir = web.path().to_path_buf();
+    cfg.job_timeout = Duration::from_secs(60);
+    // One slot: the second job stays queued, and only the shutdown can end
+    // its stream (no worker will ever publish a terminal state for it).
+    cfg.max_concurrent = 1;
+    let store = Store::memory().await;
+    let state = AppState::new(Arc::new(cfg), store.clone());
+    let jobs = state.jobs.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let signal = async move {
+        let _ = stopped.await;
+    };
+    let server = tokio::spawn(serve(listener, router(state), jobs, signal));
+
+    let v = Visitor::new(&base);
+    let id = v.create("https://slow.example/v").await;
+    v.wait_state(&id, "downloading").await;
+    let queued = v.create("https://slow.example/q").await;
+    let mut events = v.events(&id).await;
+    assert!(events.next().await.is_some());
+    let mut waiting = v.events(&queued).await;
+    assert_eq!(waiting.next().await.unwrap()["state"], "queued");
+
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("server stops within 10 s despite an open event stream")
+        .unwrap()
+        .unwrap();
+    // Both streams were ended by the server, not left hanging.
+    events.all().await;
+    waiting.all().await;
+    let job = store.get(&id).await.unwrap().unwrap();
+    assert_eq!(job.state, JobState::Failed);
+    assert_eq!(job.error.unwrap().code, ErrorCode::Interrupted);
+    let queued = store.get(&queued).await.unwrap().unwrap();
+    assert_eq!(queued.state, JobState::Queued);
 }
