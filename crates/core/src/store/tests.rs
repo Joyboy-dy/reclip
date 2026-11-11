@@ -113,3 +113,26 @@ async fn open_creates_parent_dir_and_persists() {
     let store = Store::open(&path).await.unwrap();
     assert!(store.get("j1").await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn set_state_none_clears_previous_error() {
+    let store = Store::memory().await;
+    let mut job = sample("j1");
+    job.error = None;
+    store.insert(&job).await.unwrap();
+    let err = ApiError {
+        code: ErrorCode::BotCheck,
+        message: "m".into(),
+    };
+    store
+        .set_state("j1", JobState::Failed, None, None, Some(&err))
+        .await
+        .unwrap();
+    store
+        .set_state("j1", JobState::Queued, None, None, None)
+        .await
+        .unwrap();
+    let got = store.get("j1").await.unwrap().unwrap();
+    assert_eq!(got.state, JobState::Queued);
+    assert_eq!(got.error, None);
+}

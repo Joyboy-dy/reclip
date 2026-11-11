@@ -135,8 +135,11 @@ impl Store {
         row.as_ref().map(row_to_job).transpose()
     }
 
-    /// Update a job's state. `filename`, `size` and `error` overwrite the stored
-    /// values only when provided. Terminal states stamp `finished_at`.
+    /// Update a job's state.
+    ///
+    /// - `filename` / `size`: `None` keeps the stored value.
+    /// - `error`: authoritative. `Some` stores it, `None` clears any stored error.
+    /// - Terminal states stamp `finished_at`.
     pub async fn set_state(
         &self,
         id: &str,
@@ -150,8 +153,8 @@ impl Store {
             "UPDATE jobs SET state = ?, \
              filename = COALESCE(?, filename), \
              size = COALESCE(?, size), \
-             error_code = COALESCE(?, error_code), \
-             error_message = COALESCE(?, error_message), \
+             error_code = ?, \
+             error_message = ?, \
              finished_at = COALESCE(?, finished_at) \
              WHERE id = ?",
         )
