@@ -76,3 +76,22 @@ test("formatProgress", () => {
   expect(formatProgress({ progress: null, speed: null, eta: null, state: "queued" })).toBe("Queued");
   expect(formatProgress({ progress: 99.9, speed: 1, eta: 1, state: "processing" })).toBe("Processing");
 });
+
+test("polling failure after an SSE error is reported once through onError", async () => {
+  let calls = 0;
+  const errors: unknown[] = [];
+  followJob(
+    "j1",
+    () => {},
+    {
+      EventSource: FakeES as never,
+      getJob: async () => { calls++; throw new Error("404"); },
+      intervalMs: 1,
+    },
+    (e) => errors.push(e),
+  );
+  FakeES.last.emit("error");
+  await new Promise((r) => setTimeout(r, 30));
+  expect(errors.length).toBe(1);
+  expect(calls).toBe(1);
+});

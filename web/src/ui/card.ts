@@ -26,7 +26,7 @@ export function removeCardEl(key: string): void {
 }
 
 function thumb(c: Card, format: MediaFormat): string {
-  if (format === "mp3") return PLAY_ICON;
+  if ((c.format ?? format) === "mp3") return PLAY_ICON;
   const src = c.thumbnail ?? c.info?.thumbnail;
   if (src) return `<img src="${esc(src)}" alt="">`;
   return IMAGE_ICON;
@@ -52,7 +52,7 @@ function actions(c: Card, key: string, format: MediaFormat): string {
     case "downloading":
       return c.jobId
         ? `<div class="card-progress">${progressBarHtml({ progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })}</div>
-          <button class="card-dl-btn ghost" data-act="cancel" data-key="${esc(key)}">Cancel</button>`
+          <button class="card-dl-btn ghost" data-act="cancel" data-key="${esc(key)}">Cancel</button>${c.error ? `<span class="card-status error">${esc(c.error)}</span>` : ""}`
         : '<span class="card-status downloading"><span class="spin"></span> Downloading...</span>';
     case "done":
       return `<button class="card-dl-btn done" data-act="save" data-key="${esc(key)}">Save</button>
@@ -93,7 +93,9 @@ export function renderCard(
     container.insertBefore(el, before?.parentNode === container ? before : null);
   }
 
-  if (c.status === "downloading" && c.jobId && updateProgressBar(el, { progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })) {
+  const hadErr = el.dataset.err ?? "";
+  el.dataset.err = c.error ? "1" : "";
+  if (c.status === "downloading" && c.jobId && hadErr === el.dataset.err && updateProgressBar(el, { progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })) {
     return;
   }
 

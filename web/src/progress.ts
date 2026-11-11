@@ -18,6 +18,7 @@ export function followJob(
   id: string,
   onJob: (job: Job) => void,
   deps: FollowDeps = { EventSource: globalThis.EventSource as never, getJob: apiGetJob },
+  onError: (err: unknown) => void = () => {},
 ): () => void {
   let stopped = false;
   let finished = false;
@@ -43,7 +44,9 @@ export function followJob(
     // After a terminal job the server closes the stream; that is not a failure.
     if (stopped || finished) return;
     es.close();
-    void pollJob(id, deps.getJob, deliver, deps.intervalMs ?? 1500, () => stopped || finished).catch(() => {});
+    void pollJob(id, deps.getJob, deliver, deps.intervalMs ?? 1500, () => stopped || finished).catch((err) => {
+      if (!stopped && !finished) onError(err);
+    });
   });
 
   return () => {

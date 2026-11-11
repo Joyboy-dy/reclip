@@ -42,6 +42,12 @@ function track(c: Card, jobId: string): void {
     draw(c);
     if (isTerminal(job.state)) stops.delete(c.key);
     if (c.status === "done" && !wasDone) saveCard(c.key);
+  }, undefined, (err) => {
+    if (!find(c.key)) return;
+    stops.delete(c.key);
+    c.status = "error";
+    c.error = errorText(err);
+    draw(c);
   });
   stops.set(c.key, stop);
 }
@@ -59,7 +65,7 @@ async function dlCard(key: string): Promise<void> {
   if (previous) {
     stops.get(key)?.();
     stops.delete(key);
-    void deleteJob(previous).catch(() => {});
+    await deleteJob(previous).catch(() => {});
   }
   const format = getFormat();
   try {
@@ -85,11 +91,16 @@ async function cancelCard(key: string): Promise<void> {
   const c = find(key);
   if (!c?.jobId) return;
   try {
-    applyJob(c, await cancelJob(c.jobId));
-    draw(c);
+    const job = await cancelJob(c.jobId);
+    applyJob(c, job);
+    if (isTerminal(job.state)) {
+      stops.get(key)?.();
+      stops.delete(key);
+    }
   } catch (err) {
     c.error = errorText(err);
   }
+  draw(c);
 }
 
 async function removeCard(key: string): Promise<void> {
