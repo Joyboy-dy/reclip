@@ -14,22 +14,75 @@ use crate::ytdlp::progress::ProgressEvent;
 use crate::ytdlp::runner;
 
 /// Releases the worker's slot on every exit path, panics included.
+///
+/// If the worker ends without recording an outcome (panic, task dropped),
+/// its subscribers are closed at once (`hub.forget`) and a task records
+/// `failed` ("Job crashed") and removes the job dir *before* the slot is
+/// freed: `delete`, which waits for the slot, still never races a write.
 struct Release {
     mgr: JobManager,
     id: String,
+    recorded: bool,
 }
 
 impl Drop for Release {
     fn drop(&mut self) {
-        self.mgr.release(&self.id);
+        if self.recorded {
+            self.mgr.release(&self.id);
+            return;
+        }
+        tracing::error!(job = %self.id, "job worker crashed");
+        self.mgr.hub().forget(&self.id);
+        let guard = Release {
+            mgr: self.mgr.clone(),
+            id: self.id.clone(),
+            recorded: true,
+        };
+        match tokio::runtime::Handle::try_current() {
+            // `guard` frees the slot when this task ends or is dropped.
+            Ok(rt) => drop(rt.spawn(async move { record_crash(&guard.mgr, &guard.id).await })),
+            Err(_) => drop(guard),
+        }
     }
 }
 
+async fn record_crash(mgr: &JobManager, id: &str) {
+    remove_dir(id, &mgr.config().downloads_dir.join(id)).await;
+    let error = ApiError {
+        code: ErrorCode::Internal,
+        message: "Job crashed".into(),
+    };
+    let res = mgr
+        .store()
+        .set_state(id, JobState::Failed, None, None, Some(&error))
+        .await;
+    if let Err(e) = res {
+        tracing::error!(job = %id, error = %e, "cannot record job crash");
+    }
+}
+
+async fn remove_dir(id: &str, dir: &Path) {
+    if let Err(e) = tokio::fs::remove_dir_all(dir).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(job = %id, error = %e, "cannot remove job dir");
+    }
+}
+
+/// Test hook: a worker for this URL panics before downloading.
+#[cfg(test)]
+pub(super) const PANIC_URL: &str = "https://panic.test/";
+
 pub(super) async fn run(mgr: JobManager, job: Job, cancel: CancellationToken) {
-    let _release = Release {
+    let mut release = Release {
         mgr: mgr.clone(),
         id: job.id.clone(),
+        recorded: false,
     };
+    #[cfg(test)]
+    if job.url == PANIC_URL {
+        panic!("injected worker panic");
+    }
     let dir = mgr.config().downloads_dir.join(&job.id);
     let outcome = if cancel.is_cancelled() {
         Err(cancelled())
@@ -37,6 +90,7 @@ pub(super) async fn run(mgr: JobManager, job: Job, cancel: CancellationToken) {
         download(&mgr, &job, &dir, &cancel).await
     };
     finish(&mgr, job, &dir, outcome).await;
+    release.recorded = true;
 }
 
 fn cancelled() -> ApiError {
@@ -152,11 +206,7 @@ async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String,
             }
         }
         Err(err) => {
-            if let Err(e) = tokio::fs::remove_dir_all(dir).await
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::warn!(job = %done.id, error = %e, "cannot remove job dir");
-            }
+            remove_dir(&done.id, dir).await;
             let (state, error) = match err.code {
                 ErrorCode::Cancelled if mgr.stopping() => (JobState::Failed, Some(interrupted())),
                 ErrorCode::Cancelled => (JobState::Cancelled, None),

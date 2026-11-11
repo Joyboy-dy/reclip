@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reclip_core::config::Config;
-use reclip_core::jobs::{JobManager, ManagerError};
+use reclip_core::jobs::{JobCounts, JobManager, ManagerError};
 use reclip_core::store::Store;
 use reclip_shared::{CreateJobRequest, Job, JobState, MediaFormat};
 
@@ -250,4 +250,32 @@ async fn subscribe_streams_until_terminal() {
     let sub = e.mgr.subscribe(OWNER, &id).await.unwrap();
     assert_eq!(sub.snapshot.state, JobState::Done);
     assert!(sub.updates.is_none());
+}
+
+#[tokio::test]
+async fn enqueue_twice_runs_once() {
+    let e = env(1, 2).await;
+    let a = e.create("https://slow.example/a").await;
+    let b = e.create("https://ok.example/b").await;
+    e.wait_progress(&a).await;
+    let running = e.store.get(&a).await.unwrap().unwrap();
+    let queued = e.store.get(&b).await.unwrap().unwrap();
+    // Re-enqueueing a running or queued job is ignored.
+    e.mgr.enqueue(running, OWNER);
+    e.mgr.enqueue(queued, OWNER);
+    assert_eq!(
+        e.mgr.counts(),
+        JobCounts {
+            queued: 1,
+            running: 1
+        }
+    );
+    e.mgr.cancel(OWNER, &a).await.unwrap();
+    e.wait_state(&b, JobState::Done).await;
+    let start = Instant::now();
+    while e.mgr.counts() != JobCounts::default() {
+        assert!(start.elapsed() < DEADLINE, "{:?}", e.mgr.counts());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(e.get(&a).await.state, JobState::Cancelled);
 }

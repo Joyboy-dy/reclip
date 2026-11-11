@@ -21,9 +21,9 @@ pub(super) struct Slot {
 }
 
 pub(super) struct Sched {
-    pub(super) queue: Queue,
+    queue: Queue,
     /// Queued jobs, by id, as handed to their worker.
-    pub(super) waiting: HashMap<String, Job>,
+    waiting: HashMap<String, Job>,
     running: HashMap<String, Slot>,
     per_site: HashMap<String, usize>,
     stopping: bool,
@@ -39,6 +39,13 @@ impl Sched {
             stopping: false,
         }
     }
+}
+
+/// How many jobs this process is holding, for health and tests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JobCounts {
+    pub queued: usize,
+    pub running: usize,
 }
 
 /// Where a job stood in the scheduler when it was detached from the queue.
@@ -78,8 +85,31 @@ impl JobManager {
         }
     }
 
+    pub fn counts(&self) -> JobCounts {
+        let s = self.sched();
+        JobCounts {
+            queued: s.queue.len(),
+            running: s.running.len(),
+        }
+    }
+
     pub(super) fn stopping(&self) -> bool {
         self.sched().stopping
+    }
+
+    /// Add a job to the queue, unless it is already queued or running (a
+    /// second slot would leak a per-site count and start two workers).
+    pub(super) fn admit(&self, job: Job, owner: &str) -> bool {
+        let mut s = self.sched();
+        if s.waiting.contains_key(&job.id) || s.running.contains_key(&job.id) {
+            return false;
+        }
+        // Published under the lock (order: sched, then hub) so a worker that a
+        // concurrent `schedule` starts cannot be overtaken by this snapshot.
+        self.hub().publish(job.clone());
+        s.queue.push(&job.id, owner, &site_of(&job.url));
+        s.waiting.insert(job.id.clone(), job);
+        true
     }
 
     /// Remove `id` from the queue if it waits there, else report its slot.

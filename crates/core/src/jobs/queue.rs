@@ -1,10 +1,16 @@
 //! Fair, bounded job queue. Pure: no I/O, no clock.
 //!
 //! Fairness: owners take turns. The owner picked next is the one served
-//! longest ago; owners never served (or back after their queue emptied) come
-//! first, in arrival order. Within an owner, jobs keep their arrival order,
-//! except that a job whose site is saturated is skipped (not blocking the
-//! others) and keeps its place for later.
+//! longest ago; owners never served come first, in arrival order. An owner's
+//! last-served tick outlives its queue emptying, so coming back with a new
+//! job does not jump ahead of owners served less recently. Within an owner,
+//! jobs keep their arrival order, except that a job whose site is saturated
+//! is skipped (not blocking the others) and keeps its place for later.
+//!
+//! Memory: the tick of an owner with nothing queued is dropped once it is
+//! older than every waiting owner's tick (or nothing waits at all). Such an
+//! owner would sort first among the waiting ones anyway; the only effect is
+//! that it then ranks like a newcomer, by arrival.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -35,8 +41,6 @@ struct Waiting {
 
 struct OwnerQueue {
     jobs: VecDeque<Waiting>,
-    /// Tick of the last job taken from this owner, 0 if none yet.
-    last_served: u64,
     /// Tick at which this owner (re)entered the queue.
     arrived: u64,
 }
@@ -46,6 +50,8 @@ pub struct Queue {
     max_total: usize,
     max_per_site: usize,
     owners: HashMap<String, OwnerQueue>,
+    /// Tick of the last job taken from each owner; absent means 0 (never).
+    served: HashMap<String, u64>,
     tick: u64,
 }
 
@@ -55,6 +61,7 @@ impl Queue {
             max_total,
             max_per_site,
             owners: HashMap::new(),
+            served: HashMap::new(),
             tick: 0,
         }
     }
@@ -66,7 +73,6 @@ impl Queue {
             .entry(owner.to_string())
             .or_insert_with(|| OwnerQueue {
                 jobs: VecDeque::new(),
-                last_served: 0,
                 arrived,
             })
             .jobs
@@ -86,6 +92,7 @@ impl Queue {
             return false;
         };
         self.drop_if_empty(&owner);
+        self.prune();
         true
     }
 
@@ -100,8 +107,9 @@ impl Queue {
         }
         let max_per_site = self.max_per_site;
         let free = |site: &str| running_per_site.get(site).copied().unwrap_or(0) < max_per_site;
+        let served = |owner: &str| self.served.get(owner).copied().unwrap_or(0);
         let mut order: Vec<(&String, &OwnerQueue)> = self.owners.iter().collect();
-        order.sort_by_key(|(_, q)| (q.last_served, q.arrived));
+        order.sort_by_key(|(owner, q)| (served(owner), q.arrived));
         let (owner, pos) = order.into_iter().find_map(|(owner, q)| {
             let pos = q.jobs.iter().position(|w| free(&w.site))?;
             Some((owner.clone(), pos))
@@ -109,8 +117,9 @@ impl Queue {
         self.tick += 1;
         let q = self.owners.get_mut(&owner)?;
         let job = q.jobs.remove(pos)?;
-        q.last_served = self.tick;
+        self.served.insert(owner.clone(), self.tick);
         self.drop_if_empty(&owner);
+        self.prune();
         Some(job.id)
     }
 
@@ -125,6 +134,23 @@ impl Queue {
     fn drop_if_empty(&mut self, owner: &str) {
         if self.owners.get(owner).is_some_and(|q| q.jobs.is_empty()) {
             self.owners.remove(owner);
+        }
+    }
+
+    /// Forget ticks that can no longer change the order (see module doc).
+    fn prune(&mut self) {
+        let oldest_waiting = self
+            .owners
+            .keys()
+            .map(|o| self.served.get(o).copied().unwrap_or(0))
+            .min();
+        match oldest_waiting {
+            None => self.served.clear(),
+            Some(min) => {
+                let owners = &self.owners;
+                self.served
+                    .retain(|o, t| owners.contains_key(o) || *t >= min);
+            }
         }
     }
 }
@@ -213,6 +239,38 @@ mod tests {
         q.push("c1", "C", "x");
         assert_eq!(q.next(0, &none).as_deref(), Some("c1"));
         assert_eq!(q.next(0, &none).as_deref(), Some("a2"));
+    }
+
+    #[test]
+    fn owner_returning_with_new_job_does_not_jump_ahead() {
+        let mut q = Queue::new(1, 10);
+        q.push("a1", "A", "x");
+        q.push("a2", "A", "x");
+        q.push("b1", "B", "x");
+        let none = HashMap::new();
+        assert_eq!(q.next(0, &none).as_deref(), Some("a1"));
+        assert_eq!(q.next(0, &none).as_deref(), Some("b1"));
+        // B's queue emptied; it comes back after A was served less recently.
+        q.push("b2", "B", "x");
+        assert_eq!(q.next(0, &none).as_deref(), Some("a2"));
+        assert_eq!(q.next(0, &none).as_deref(), Some("b2"));
+    }
+
+    #[test]
+    fn served_ticks_are_pruned_once_idle_owners_are_oldest() {
+        let mut q = Queue::new(1, 10);
+        let none = HashMap::new();
+        for i in 0..100 {
+            q.push(&format!("j{i}"), &format!("o{i}"), "x");
+            assert!(q.next(0, &none).is_some());
+        }
+        // Nothing waits: no served tick can matter any more.
+        assert_eq!(q.served.len(), 0);
+        q.push("a1", "A", "x");
+        q.push("b1", "B", "x");
+        assert_eq!(q.next(0, &none).as_deref(), Some("a1"));
+        // B still waits and was never served: A's newer tick is kept.
+        assert!(q.served.contains_key("A"));
     }
 
     #[test]

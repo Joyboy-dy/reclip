@@ -11,6 +11,8 @@ pub mod hub;
 pub mod progress_tracker;
 pub mod queue;
 mod sched;
+#[cfg(test)]
+mod tests;
 mod worker;
 
 use std::sync::{Arc, Mutex};
@@ -22,6 +24,7 @@ use sched::{Sched, Tracked};
 
 pub use hub::Hub;
 pub use queue::{Queue, site_of};
+pub use sched::JobCounts;
 
 use crate::config::Config;
 use crate::store::Store;
@@ -121,14 +124,14 @@ impl JobManager {
     }
 
     /// Queue a job already stored as `queued` (creation, startup recovery).
+    /// A job already queued or running here is left alone (warning logged).
     pub fn enqueue(&self, job: Job, owner: &str) {
-        self.hub().publish(job.clone());
-        {
-            let mut s = self.sched();
-            s.queue.push(&job.id, owner, &site_of(&job.url));
-            s.waiting.insert(job.id.clone(), job);
+        let id = job.id.clone();
+        if self.admit(job, owner) {
+            self.schedule();
+        } else {
+            tracing::warn!(job = %id, "already queued or running, not enqueued again");
         }
-        self.schedule();
     }
 
     async fn owned(&self, owner: &str, id: &str) -> Result<Job, ManagerError> {
