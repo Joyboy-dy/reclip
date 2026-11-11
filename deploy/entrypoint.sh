@@ -4,7 +4,7 @@
 # reclip user, so it can replace itself. Skip with RECLIP_NO_UPDATE=1.
 if [ -z "$RECLIP_NO_UPDATE" ]; then
     echo "Updating yt-dlp..."
-    yt-dlp -U || echo "  (couldn't update yt-dlp, continuing with the installed version)"
+    timeout 30 yt-dlp -U || echo "  (couldn't update yt-dlp, continuing with the installed version)"
 fi
 
 exec "$@"

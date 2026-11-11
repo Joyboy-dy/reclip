@@ -16,6 +16,8 @@ services:
     networks:
       - core_net
     restart: unless-stopped
+    # Reaps yt-dlp's orphaned children (PID 1 is reclip-core, which never waits on them).
+    init: true
     environment:
       # The container always listens on 8899; RECLIP_PORT only changes the host side.
       RECLIP_PORT: "8899"
