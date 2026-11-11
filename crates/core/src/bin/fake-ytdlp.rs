@@ -29,7 +29,9 @@ fn main() {
         return;
     }
     if url.contains("too-long") {
-        println!("[download] Fake does not pass filter (duration <=? 10800), skipping ..");
+        println!(
+            "[download] Fake does not pass filter (!is_live & duration <=? 10800), skipping .."
+        );
         return;
     }
     if url.contains("multi-files") {

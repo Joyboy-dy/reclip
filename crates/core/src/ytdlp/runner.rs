@@ -126,7 +126,7 @@ fn no_file_error(out: &Output) -> ApiError {
             return err(ErrorCode::TooLarge, line);
         }
         if line.contains("does not pass filter") {
-            return err(ErrorCode::TooLong, line);
+            return err(ErrorCode::TooLong, "Video is too long or is a live stream");
         }
     }
     err(

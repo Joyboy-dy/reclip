@@ -69,10 +69,12 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
         ["--flat-playlist", "-J", "--playlist-end"]
             .map(String::from)
             .into_iter()
-            .chain([playlist_limit.to_string(), url.to_string()])
+            .chain([playlist_limit.to_string(), "--".into(), url.to_string()])
             .collect()
     } else {
-        ["--no-playlist", "-j", url].map(String::from).to_vec()
+        ["--no-playlist", "-j", "--", url]
+            .map(String::from)
+            .to_vec()
     }
 }
 
@@ -109,7 +111,8 @@ pub fn download_args(
         "--max-filesize".into(),
         max_filesize.into(),
         "--match-filter".into(),
-        format!("duration <=? {max_duration}"),
+        format!("!is_live & duration <=? {max_duration}"),
+        "--".into(),
         url.into(),
     ]);
     a
@@ -189,7 +192,7 @@ mod tests {
     fn single_video_probe() {
         assert_eq!(
             probe_args("https://youtube.com/watch?v=a", 50),
-            ["--no-playlist", "-j", "https://youtube.com/watch?v=a"]
+            ["--no-playlist", "-j", "--", "https://youtube.com/watch?v=a"]
         );
     }
     #[test]
@@ -201,6 +204,7 @@ mod tests {
                 "-J",
                 "--playlist-end",
                 "50",
+                "--",
                 "https://youtube.com/watch?v=a&list=RDx"
             ]
         );
@@ -227,8 +231,17 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["--max-filesize", "2G"]));
         assert!(
             a.windows(2)
-                .any(|w| w == ["--match-filter", "duration <=? 10800"])
+                .any(|w| w == ["--match-filter", "!is_live & duration <=? 10800"])
         );
+        let n = a.len();
+        assert_eq!(a[n - 2], "--");
+        assert_eq!(a[n - 1], "u");
+    }
+    #[test]
+    fn download_args_reject_live_streams() {
+        let a = download_args("o", MediaFormat::Mp4, None, "2G", 10800, "u");
+        let i = a.iter().position(|x| x == "--match-filter").unwrap();
+        assert!(a[i + 1].contains("!is_live"));
     }
     #[test]
     fn mp4_without_format_id() {
