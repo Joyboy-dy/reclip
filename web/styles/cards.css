@@ -220,3 +220,34 @@
   }
   .card-title { white-space: normal; }
 }
+
+/* Progress, cancel, remove */
+.card-progress { flex: 1; min-width: 140px; }
+.pbar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--card-border);
+  overflow: hidden;
+}
+.pbar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.pbar.queued .pbar-fill { width: 0 !important; }
+.pbar.processing .pbar-fill { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.45; } }
+.pbar-text {
+  margin-top: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+.card-dl-btn.ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1.5px solid var(--card-border);
+}
+.card-dl-btn.ghost:hover { background: transparent; color: var(--fg); border-color: var(--muted); }

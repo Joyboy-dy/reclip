@@ -1,6 +1,7 @@
 import type { MediaFormat } from "../api/types.gen";
 import type { Card } from "../state";
 import { esc, fmtDur } from "../urls";
+import { progressBarHtml, updateProgressBar } from "./progress-bar";
 
 const ERROR_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
@@ -10,60 +11,90 @@ const IMAGE_ICON =
   '<div class="no-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>';
 
 export type CardActions = {
-  download: (idx: number) => void;
-  save: (idx: number) => void;
-  pick: (idx: number, formatId: string) => void;
+  download: (key: string) => void;
+  save: (key: string) => void;
+  pick: (key: string, formatId: string) => void;
+  cancel: (key: string) => void;
+  remove: (key: string) => void;
 };
+
+const cardEl = (key: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`#cards [data-key="${CSS.escape(key)}"]`);
+
+export function removeCardEl(key: string): void {
+  cardEl(key)?.remove();
+}
 
 function thumb(c: Card, format: MediaFormat): string {
   if (format === "mp3") return PLAY_ICON;
-  if (c.info?.thumbnail) return `<img src="${esc(c.info.thumbnail)}" alt="">`;
+  const src = c.thumbnail ?? c.info?.thumbnail;
+  if (src) return `<img src="${esc(src)}" alt="">`;
   return IMAGE_ICON;
 }
 
-function actions(c: Card, idx: number, format: MediaFormat): string {
+const removeBtn = (c: Card, key: string): string =>
+  c.jobId ? `<button class="card-dl-btn ghost" data-act="remove" data-key="${esc(key)}">Remove</button>` : "";
+
+function actions(c: Card, key: string, format: MediaFormat): string {
   const formats = c.info?.formats ?? [];
   const chips =
     format === "mp4" && formats.length > 1
       ? formats
           .map(
             (f) =>
-              `<button class="q-chip${f.id === c.selectedFormat ? " active" : ""}" data-act="pick" data-idx="${idx}" data-fid="${esc(f.id)}">${esc(f.label)}</button>`,
+              `<button class="q-chip${f.id === c.selectedFormat ? " active" : ""}" data-act="pick" data-key="${esc(key)}" data-fid="${esc(f.id)}">${esc(f.label)}</button>`,
           )
           .join("")
       : "";
   switch (c.status) {
     case "ready":
-      return `<button class="card-dl-btn" data-act="download" data-idx="${idx}">Download</button>${chips}`;
+      return `<button class="card-dl-btn" data-act="download" data-key="${esc(key)}">Download</button>${chips}`;
     case "downloading":
-      return '<span class="card-status downloading"><span class="spin"></span> Downloading...</span>';
+      return c.jobId
+        ? `<div class="card-progress">${progressBarHtml({ progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })}</div>
+          <button class="card-dl-btn ghost" data-act="cancel" data-key="${esc(key)}">Cancel</button>`
+        : '<span class="card-status downloading"><span class="spin"></span> Downloading...</span>';
     case "done":
-      return `<button class="card-dl-btn done" data-act="save" data-idx="${idx}">Save</button>
-          <span class="card-status done">${esc(c.filename ?? "")}</span>`;
+      return `<button class="card-dl-btn done" data-act="save" data-key="${esc(key)}">Save</button>
+          <span class="card-status done">${esc(c.filename ?? "")}</span>${removeBtn(c, key)}`;
     case "error":
-      return `<button class="card-dl-btn" data-act="download" data-idx="${idx}">Retry</button>
-          <span class="card-status error">${esc(c.error ?? "Download failed")}</span>`;
+      return `${c.info ? `<button class="card-dl-btn" data-act="download" data-key="${esc(key)}">Retry</button>` : ""}
+          <span class="card-status error">${esc(c.error ?? "Download failed")}</span>${removeBtn(c, key)}`;
     default:
       return "";
   }
 }
 
-/** Render (or re-render) the card at `idx` inside #cards. */
-export function renderCard(c: Card, idx: number, format: MediaFormat, handlers: CardActions): void {
+/**
+ * Render (or re-render) a card inside #cards. A new card goes before `before`
+ * (default: the end); an existing one is updated in place.
+ */
+export function renderCard(
+  c: Card,
+  format: MediaFormat,
+  handlers: CardActions,
+  before: Element | null = null,
+): void {
   const container = document.getElementById("cards") as HTMLElement;
-  let el = document.getElementById(`card-${idx}`);
+  let el = cardEl(c.key);
   if (!el) {
     el = document.createElement("div");
-    el.id = `card-${idx}`;
+    el.dataset.key = c.key;
     el.addEventListener("click", (e) => {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-act]");
-      if (!t || t.dataset.idx === undefined) return;
-      const i = Number(t.dataset.idx);
-      if (t.dataset.act === "download") handlers.download(i);
-      else if (t.dataset.act === "save") handlers.save(i);
-      else if (t.dataset.act === "pick") handlers.pick(i, t.dataset.fid ?? "");
+      if (!t || t.dataset.key === undefined) return;
+      const k = t.dataset.key;
+      if (t.dataset.act === "download") handlers.download(k);
+      else if (t.dataset.act === "save") handlers.save(k);
+      else if (t.dataset.act === "cancel") handlers.cancel(k);
+      else if (t.dataset.act === "remove") handlers.remove(k);
+      else if (t.dataset.act === "pick") handlers.pick(k, t.dataset.fid ?? "");
     });
-    container.appendChild(el);
+    container.insertBefore(el, before?.parentNode === container ? before : null);
+  }
+
+  if (c.status === "downloading" && c.jobId && updateProgressBar(el, { progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })) {
+    return;
   }
 
   if (c.status === "loading") {
@@ -98,14 +129,14 @@ export function renderCard(c: Card, idx: number, format: MediaFormat, handlers: 
   el.innerHTML = `
         <div class="card-thumb">${thumb(c, format)}</div>
         <div class="card-body">
-          <div class="card-title">${esc(info?.title || "Untitled")}</div>
+          <div class="card-title">${esc(c.title || info?.title || "Untitled")}</div>
           <div class="card-meta">${esc(info?.uploader ?? "")}${info?.duration ? " · " + fmtDur(info.duration) : ""}</div>
-          <div class="card-actions">${actions(c, idx, format)}</div>
+          <div class="card-actions">${actions(c, c.key, c.format ?? format)}</div>
         </div>
       `;
 }
 
-export function renderDownloadAll(onClick: () => void): HTMLButtonElement {
+export function renderDownloadAll(onClick: () => void, before: Element | null = null): HTMLButtonElement {
   document.getElementById("dl-all-bar")?.remove();
   const bar = document.createElement("div");
   bar.id = "dl-all-bar";
@@ -113,6 +144,7 @@ export function renderDownloadAll(onClick: () => void): HTMLButtonElement {
   bar.innerHTML = '<button class="dl-all-btn">Download All</button>';
   const btn = bar.firstElementChild as HTMLButtonElement;
   btn.addEventListener("click", onClick);
-  document.getElementById("cards")?.appendChild(bar);
+  const container = document.getElementById("cards") as HTMLElement;
+  container.insertBefore(bar, before?.parentNode === container ? before : null);
   return btn;
 }
