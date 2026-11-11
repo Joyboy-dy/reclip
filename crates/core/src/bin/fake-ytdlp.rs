@@ -104,9 +104,13 @@ fn main() {
     }
     if let Some(template) = value("-o") {
         // Record the arguments so tests can assert on them.
+        // Next to the job dir (`<id>.args.txt`), which the runner would clean.
         if let Some(dir) = std::path::Path::new(&template).parent() {
             std::fs::create_dir_all(dir).unwrap();
-            std::fs::write(dir.join("args.txt"), args.join("\n")).unwrap();
+            if let (Some(root), Some(name)) = (dir.parent(), dir.file_name()) {
+                let file = root.join(format!("{}.args.txt", name.to_string_lossy()));
+                std::fs::write(file, args.join("\n")).unwrap();
+            }
         }
         for done in [200, 400, 600, 800, 1000] {
             progress(&done.to_string(), "1000", "NA", "NA", "NA");

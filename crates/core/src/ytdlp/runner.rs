@@ -144,8 +144,7 @@ fn pick_output(job_dir: &Path, format: MediaFormat) -> Option<PathBuf> {
         .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
-        // `args.txt` is written by the test double to record its arguments.
-        .filter(|p| p.is_file() && p.file_name().is_some_and(|n| n != "args.txt"))
+        .filter(|p| p.is_file())
         .collect();
     files.sort();
     let keep = files
