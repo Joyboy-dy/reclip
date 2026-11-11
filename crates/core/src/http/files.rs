@@ -6,6 +6,7 @@ use reclip_shared::JobState;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
+use super::identity::Owner;
 use super::{internal, not_found};
 use crate::app::AppState;
 
@@ -39,8 +40,13 @@ pub fn content_disposition(filename: &str) -> String {
     format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
 }
 
-pub async fn download(State(s): State<AppState>, Path(id): Path<String>, req: Request) -> Response {
-    let job = match s.store.get(&id).await {
+pub async fn download(
+    State(s): State<AppState>,
+    Owner(owner): Owner,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
+    let job = match s.store.get_owned(&id, &owner).await {
         Ok(Some(j)) if j.state == JobState::Done => j,
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),

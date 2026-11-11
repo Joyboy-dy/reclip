@@ -10,7 +10,11 @@ use crate::ytdlp::parse::safe_filename;
 use crate::ytdlp::runner;
 
 /// Insert a queued job and run it in the background.
-pub async fn spawn_job(state: AppState, req: CreateJobRequest) -> Result<Job, ApiError> {
+pub async fn spawn_job(
+    state: AppState,
+    req: CreateJobRequest,
+    owner: &str,
+) -> Result<Job, ApiError> {
     let job = Job {
         id: uuid::Uuid::now_v7().simple().to_string(),
         url: req.url,
@@ -28,10 +32,9 @@ pub async fn spawn_job(state: AppState, req: CreateJobRequest) -> Result<Job, Ap
         created_at: crate::store::now(),
         expires_at: None,
     };
-    // Owner arrives with Task 2.
     state
         .store
-        .insert(&job, "")
+        .insert(&job, owner)
         .await
         .map_err(|e| internal(e).0)?;
     tokio::spawn(run_job(state, job.clone(), req.format_id));

@@ -8,8 +8,22 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 struct Server {
-    base: String,
+    visitor: Visitor,
+    store: Store,
     _dirs: (tempfile::TempDir, tempfile::TempDir),
+}
+
+impl std::ops::Deref for Server {
+    type Target = Visitor;
+    fn deref(&self) -> &Visitor {
+        &self.visitor
+    }
+}
+
+/// One anonymous browser: its own cookie jar.
+struct Visitor {
+    base: String,
+    client: reqwest::Client,
 }
 
 async fn start() -> Server {
@@ -21,22 +35,33 @@ async fn start() -> Server {
     cfg.downloads_dir = downloads.path().to_path_buf();
     cfg.web_dir = web.path().to_path_buf();
     cfg.job_timeout = Duration::from_secs(5);
+    let store = Store::memory().await;
     let state = AppState {
         cfg: Arc::new(cfg),
-        store: Store::memory().await,
+        store: store.clone(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
     Server {
-        base,
+        visitor: Visitor::new(&base),
+        store,
         _dirs: (downloads, web),
     }
 }
 
-impl Server {
+impl Visitor {
+    fn new(base: &str) -> Visitor {
+        Visitor {
+            base: base.to_string(),
+            client: reqwest::Client::builder()
+                .cookie_store(true)
+                .build()
+                .unwrap(),
+        }
+    }
     async fn post(&self, path: &str, body: Value) -> Response {
-        reqwest::Client::new()
+        self.client
             .post(format!("{}{path}", self.base))
             .json(&body)
             .send()
@@ -44,7 +69,11 @@ impl Server {
             .unwrap()
     }
     async fn get(&self, path: &str) -> Response {
-        reqwest::get(format!("{}{path}", self.base)).await.unwrap()
+        self.client
+            .get(format!("{}{path}", self.base))
+            .send()
+            .await
+            .unwrap()
     }
     async fn wait_job(&self, id: &str, want: &str) -> Value {
         for _ in 0..50 {
@@ -136,7 +165,8 @@ async fn file_supports_range() {
     let s = start().await;
     let id = s.create("https://ok").await;
     s.wait_job(&id, "done").await;
-    let r = reqwest::Client::new()
+    let r = s
+        .client
         .get(format!("{}/api/v1/jobs/{id}/file", s.base))
         .header("Range", "bytes=0-3")
         .send()
@@ -191,4 +221,125 @@ async fn unknown_api_path_is_json_404() {
     assert_eq!(r.status(), 404);
     assert_eq!(r.json::<Value>().await.unwrap()["code"], "invalid_request");
     assert_eq!(s.get("/api/other").await.status(), 404);
+}
+
+fn set_cookie(r: &Response) -> String {
+    r.headers()["set-cookie"].to_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn first_request_sets_client_cookie() {
+    let s = start().await;
+    let r = reqwest::get(format!("{}/api/v1/jobs", s.base))
+        .await
+        .unwrap();
+    let c = set_cookie(&r);
+    let value = c
+        .strip_prefix("reclip_client=")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    assert_eq!(value.len(), 32);
+    assert!(
+        value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    for attr in ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=31536000"] {
+        assert!(c.contains(attr), "{attr} in {c}");
+    }
+    assert!(!c.contains("Secure"), "{c}");
+    // Static files and health do not get an identity.
+    let h = reqwest::get(format!("{}/healthz", s.base)).await.unwrap();
+    assert!(!h.headers().contains_key("set-cookie"));
+}
+
+#[tokio::test]
+async fn valid_cookie_is_kept_and_invalid_is_replaced() {
+    let s = start().await;
+    let c = reqwest::Client::new();
+    let url = format!("{}/api/v1/jobs", s.base);
+    let good = "0123456789abcdef0123456789abcdef";
+    let r = c
+        .get(&url)
+        .header("Cookie", format!("reclip_client={good}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(!r.headers().contains_key("set-cookie"));
+    for bad in [
+        "ABCDEF0123456789abcdef0123456789",
+        "short",
+        "zz23456789abcdef0123456789abcdef",
+    ] {
+        let r = c
+            .get(&url)
+            .header("Cookie", format!("reclip_client={bad}"))
+            .send()
+            .await
+            .unwrap();
+        let sc = set_cookie(&r);
+        assert!(sc.starts_with("reclip_client="), "{bad}");
+        assert!(!sc.contains(bad), "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn secure_cookie_behind_https_proxy() {
+    let s = start().await;
+    let r = reqwest::Client::new()
+        .get(format!("{}/api/v1/jobs", s.base))
+        .header("X-Forwarded-Proto", "https")
+        .send()
+        .await
+        .unwrap();
+    assert!(set_cookie(&r).contains("Secure"));
+}
+
+#[tokio::test]
+async fn jobs_are_listed_per_visitor() {
+    let s = start().await;
+    let b = Visitor::new(&s.base);
+    s.create("https://ok").await;
+    s.create("https://ok").await;
+    b.post(
+        "/api/v1/jobs",
+        json!({"url": "https://ok", "format": "mp4"}),
+    )
+    .await;
+    let la: Value = s.get("/api/v1/jobs").await.json().await.unwrap();
+    let lb: Value = b.get("/api/v1/jobs").await.json().await.unwrap();
+    assert_eq!(la["jobs"].as_array().unwrap().len(), 2);
+    assert_eq!(lb["jobs"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn other_visitor_gets_404() {
+    let s = start().await;
+    let id = s.create("https://ok").await;
+    s.wait_job(&id, "done").await;
+    let b = Visitor::new(&s.base);
+    for path in [
+        format!("/api/v1/jobs/{id}"),
+        format!("/api/v1/jobs/{id}/file"),
+    ] {
+        let r = b.get(&path).await;
+        assert_eq!(r.status(), 404, "{path}");
+        assert_eq!(r.json::<Value>().await.unwrap()["code"], "invalid_request");
+    }
+}
+
+#[tokio::test]
+async fn legacy_ownerless_jobs_are_unreachable() {
+    let s = start().await;
+    let id = s.create("https://ok").await;
+    s.wait_job(&id, "done").await;
+    let mut legacy = s.store.get(&id).await.unwrap().unwrap();
+    legacy.id = "legacy1".into();
+    s.store.insert(&legacy, "").await.unwrap();
+    let fresh = Visitor::new(&s.base);
+    assert_eq!(fresh.get("/api/v1/jobs/legacy1").await.status(), 404);
+    let l: Value = fresh.get("/api/v1/jobs").await.json().await.unwrap();
+    assert!(l["jobs"].as_array().unwrap().is_empty());
 }
