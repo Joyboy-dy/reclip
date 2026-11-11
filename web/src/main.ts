@@ -1,7 +1,8 @@
 import { cancelJob, createJob, deleteJob, fileUrl, getConfig, listJobs, probe } from "./api/client";
 import type { Job } from "./api/types.gen";
 import { errorText } from "./errors";
-import { followJob } from "./progress";
+import { cappedFollower } from "./live-slots";
+import { followJob, pollFollow } from "./progress";
 import { type Card, applyJob, cardFromJob, expandPlaylists, isTerminal } from "./state";
 import { type CardActions, removeCardEl, renderCard, renderDownloadAll } from "./ui/card";
 import { renderTelegramLink } from "./ui/footer";
@@ -13,6 +14,11 @@ const stops = new Map<string, () => void>();
 let nextKey = 0;
 const getFormat = setupFormatToggle();
 const find = (key: string): Card | undefined => cards.find((c) => c.key === key);
+// At most 3 open EventSources per page; other unfinished jobs are polled.
+const follow = cappedFollower(
+  (id, onJob, onError, onStreamEnd) => followJob(id, onJob, undefined, onError, onStreamEnd),
+  (id, onJob, onError) => pollFollow(id, onJob, onError),
+);
 
 const draw = (c: Card, before: Element | null = null) => renderCard(c, getFormat(), actions, before);
 
@@ -35,14 +41,14 @@ function saveCard(key: string): void {
 /** Follow a job and mirror its live state into its card. */
 function track(c: Card, jobId: string): void {
   stops.get(c.key)?.();
-  const stop = followJob(jobId, (job: Job) => {
+  const stop = follow(jobId, (job: Job) => {
     if (!find(c.key)) return;
     const wasDone = c.status === "done";
     applyJob(c, job);
     draw(c);
     if (isTerminal(job.state)) stops.delete(c.key);
     if (c.status === "done" && !wasDone) saveCard(c.key);
-  }, undefined, (err) => {
+  }, (err) => {
     if (!find(c.key)) return;
     stops.delete(c.key);
     c.status = "error";

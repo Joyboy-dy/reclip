@@ -1,3 +1,4 @@
+import { ApiFailure } from "./api/client";
 import { jobError } from "./errors";
 import type { Job, JobState, MediaFormat, ProbeResponse, VideoInfo } from "./api/types.gen";
 
@@ -75,20 +76,66 @@ export async function expandPlaylists(
   return out;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Poll a job until it reaches a terminal state; resolves with the final job. */
+/** How `pollJob` retries a `getJob` that got no usable answer. */
+export type RetryPolicy = {
+  /** Waits before the first retries, in order. */
+  delaysMs: number[];
+  /** Wait before each later retry. */
+  everyMs: number;
+  /** Give up once requests have kept failing for this long. */
+  giveUpMs: number;
+};
+
+/** 1.5 s, 3 s, 6 s, then every 10 s, for up to 2 minutes (a server restart). */
+export const POLL_RETRY: RetryPolicy = { delaysMs: [1500, 3000, 6000], everyMs: 10_000, giveUpMs: 120_000 };
+
+export type PollOptions = {
+  retry?: RetryPolicy;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+};
+
+/**
+ * Worth retrying: no HTTP answer at all (network down, server restarting) or a
+ * 5xx from a proxy in front of a restarting server. A 4xx such as 404 (job
+ * removed) will not get better.
+ */
+const retryable = (err: unknown): boolean => !(err instanceof ApiFailure) || err.status >= 500;
+
+/**
+ * Poll a job until it reaches a terminal state; resolves with the final job.
+ * Failed requests are retried with backoff (see `POLL_RETRY`); the last error
+ * is thrown once retrying gives up, and a 4xx is thrown at once.
+ */
 export async function pollJob(
   id: string,
   getJob: (id: string) => Promise<Job>,
   onUpdate: (job: Job) => void,
   intervalMs = 1500,
   shouldStop: () => boolean = () => false,
+  opts: PollOptions = {},
 ): Promise<Job> {
+  const { retry = POLL_RETRY, sleep: wait = sleep, now = Date.now } = opts;
+  let failingSince: number | undefined;
+  let failures = 0;
   for (;;) {
-    const job = await getJob(id);
+    let job: Job;
+    try {
+      job = await getJob(id);
+    } catch (err) {
+      if (!retryable(err) || shouldStop()) throw err;
+      failingSince ??= now();
+      if (now() - failingSince >= retry.giveUpMs) throw err;
+      await wait(retry.delaysMs[failures++] ?? retry.everyMs);
+      if (shouldStop()) throw err;
+      continue;
+    }
+    failingSince = undefined;
+    failures = 0;
     if (!shouldStop()) onUpdate(job);
     if (isTerminal(job.state) || shouldStop()) return job;
-    await sleep(intervalMs);
+    await wait(intervalMs);
   }
 }

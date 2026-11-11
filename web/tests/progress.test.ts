@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { ApiFailure } from "../src/api/client";
 import type { Job } from "../src/api/types.gen";
 import { followJob } from "../src/progress";
 import { formatProgress } from "../src/ui/progress-bar";
@@ -85,7 +86,7 @@ test("polling failure after an SSE error is reported once through onError", asyn
     () => {},
     {
       EventSource: FakeES as never,
-      getJob: async () => { calls++; throw new Error("404"); },
+      getJob: async () => { calls++; throw new ApiFailure("internal", "Not found", 404); },
       intervalMs: 1,
     },
     (e) => errors.push(e),
@@ -94,4 +95,27 @@ test("polling failure after an SSE error is reported once through onError", asyn
   await new Promise((r) => setTimeout(r, 30));
   expect(errors.length).toBe(1);
   expect(calls).toBe(1);
+});
+
+test("onStreamEnd fires once when the stream closes, whatever the reason", async () => {
+  const deps = { EventSource: FakeES as never, getJob: async () => job("done"), intervalMs: 1 };
+  let ends = 0;
+  followJob("j1", () => {}, deps, () => {}, () => ends++);
+  FakeES.last.emit("job", job("downloading"));
+  expect(ends).toBe(0);
+  FakeES.last.emit("job", job("done"));
+  FakeES.last.emit("error");
+  expect(ends).toBe(1);
+
+  ends = 0;
+  const stop = followJob("j1", () => {}, deps, () => {}, () => ends++);
+  FakeES.last.emit("error"); // falls back to polling: the connection is free
+  expect(ends).toBe(1);
+  stop();
+  expect(ends).toBe(1);
+  await new Promise((r) => setTimeout(r, 20));
+
+  ends = 0;
+  followJob("j1", () => {}, deps, () => {}, () => ends++)();
+  expect(ends).toBe(1);
 });
