@@ -3,6 +3,7 @@ name = "reclip-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "reclip-core"
 
 [lib]
 name = "reclip_core"

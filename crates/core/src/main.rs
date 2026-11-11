@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use reclip_core::app::{AppState, router};
 use reclip_core::config::Config;
+use reclip_core::healthcheck;
 use reclip_core::store::Store;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -10,6 +11,13 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if is_healthcheck(&args) {
+        // Used by the Docker HEALTHCHECK: the image has no curl.
+        let cfg = Config::from_env(&|k| std::env::var(k).ok());
+        let ok = healthcheck::probe(cfg.port, healthcheck::TIMEOUT).await;
+        std::process::exit(if ok { 0 } else { 1 });
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -56,4 +64,20 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let term = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
+}
+
+fn is_healthcheck(args: &[String]) -> bool {
+    args.first().is_some_and(|a| a == "healthcheck")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_healthcheck;
+
+    #[test]
+    fn dispatches_healthcheck_subcommand() {
+        assert!(is_healthcheck(&["healthcheck".to_string()]));
+        assert!(!is_healthcheck(&[]));
+        assert!(!is_healthcheck(&["serve".to_string()]));
+    }
 }
