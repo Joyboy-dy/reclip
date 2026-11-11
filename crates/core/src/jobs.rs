@@ -15,14 +15,25 @@ pub async fn spawn_job(state: AppState, req: CreateJobRequest) -> Result<Job, Ap
         id: uuid::Uuid::now_v7().simple().to_string(),
         url: req.url,
         format: req.format,
+        format_id: req.format_id.clone(),
         title: req.title,
+        thumbnail: req.thumbnail,
         state: JobState::Queued,
         filename: None,
         size: None,
         error: None,
-        created_at: chrono::Utc::now().to_rfc3339(),
+        progress: None,
+        speed: None,
+        eta: None,
+        created_at: crate::store::now(),
+        expires_at: None,
     };
-    state.store.insert(&job).await.map_err(|e| internal(e).0)?;
+    // Owner arrives with Task 2.
+    state
+        .store
+        .insert(&job, "")
+        .await
+        .map_err(|e| internal(e).0)?;
     tokio::spawn(run_job(state, job.clone(), req.format_id));
     Ok(job)
 }

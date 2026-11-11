@@ -61,8 +61,15 @@ pub struct ProbeRequest {
 pub struct CreateJobRequest {
     pub url: String,
     pub format: MediaFormat,
+    #[serde(default)]
+    #[ts(optional)]
     pub format_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
     pub title: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub thumbnail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -70,14 +77,31 @@ pub struct Job {
     pub id: String,
     pub url: String,
     pub format: MediaFormat,
+    pub format_id: Option<String>,
     pub title: Option<String>,
+    pub thumbnail: Option<String>,
     pub state: JobState,
     pub filename: Option<String>,
     #[ts(type = "number | null")]
     pub size: Option<u64>,
     pub error: Option<ApiError>,
+    /// Live progress, 0 to 100. Never stored.
+    pub progress: Option<f32>,
+    /// Live speed in bytes per second. Never stored.
+    #[ts(type = "number | null")]
+    pub speed: Option<u64>,
+    /// Live ETA in seconds. Never stored.
+    #[ts(type = "number | null")]
+    pub eta: Option<u64>,
     /// RFC 3339 timestamp.
     pub created_at: String,
+    /// RFC 3339 timestamp.
+    pub expires_at: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct JobList {
+    pub jobs: Vec<Job>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]

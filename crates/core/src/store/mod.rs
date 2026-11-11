@@ -11,11 +11,12 @@ use serde::de::DeserializeOwned;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
+mod queries;
 #[cfg(test)]
 mod tests;
 
-const COLUMNS: &str = "id, url, format, title, state, filename, size, \
-                       error_code, error_message, created_at";
+const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, filename, size, \
+                       error_code, error_message, created_at, expires_at";
 
 /// Persistent job storage. Cheap to clone (wraps a connection pool).
 #[derive(Clone)]
@@ -41,8 +42,13 @@ fn is_terminal(state: JobState) -> bool {
     )
 }
 
-fn now() -> String {
-    chrono::Utc::now().to_rfc3339()
+/// Current UTC time as RFC 3339 with millisecond precision and a `Z` suffix.
+///
+/// Timestamps are compared as strings in SQL (`expires_at <= ?`, ordering by
+/// `created_at`), which is only correct when every value is UTC and uses this
+/// exact format. Use this function for every timestamp written to the store.
+pub fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn row_to_job(row: &SqliteRow) -> Result<Job> {
@@ -59,12 +65,18 @@ fn row_to_job(row: &SqliteRow) -> Result<Job> {
         id: row.try_get("id")?,
         url: row.try_get("url")?,
         format: from_wire(&row.try_get::<String, _>("format")?)?,
+        format_id: row.try_get("format_id")?,
         title: row.try_get("title")?,
+        thumbnail: row.try_get("thumbnail")?,
         state: from_wire(&row.try_get::<String, _>("state")?)?,
         filename: row.try_get("filename")?,
         size: row.try_get::<Option<i64>, _>("size")?.map(|n| n as u64),
         error,
+        progress: None,
+        speed: None,
+        eta: None,
         created_at: row.try_get("created_at")?,
+        expires_at: row.try_get("expires_at")?,
     })
 }
 
@@ -106,22 +118,27 @@ impl Store {
         Store(pool)
     }
 
-    pub async fn insert(&self, job: &Job) -> Result<()> {
+    /// Insert a job for `owner` (e.g. `web:<hex>`; `""` for legacy rows).
+    pub async fn insert(&self, job: &Job, owner: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO jobs (id, url, format, title, state, filename, size, \
-             error_code, error_message, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO jobs (id, url, format, format_id, title, thumbnail, state, \
+             filename, size, error_code, error_message, created_at, expires_at, owner) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&job.id)
         .bind(&job.url)
         .bind(to_wire(&job.format)?)
+        .bind(&job.format_id)
         .bind(&job.title)
+        .bind(&job.thumbnail)
         .bind(to_wire(&job.state)?)
         .bind(&job.filename)
         .bind(job.size.map(|n| n as i64))
         .bind(job.error.as_ref().map(|e| to_wire(&e.code)).transpose()?)
         .bind(job.error.as_ref().map(|e| e.message.as_str()))
         .bind(&job.created_at)
+        .bind(&job.expires_at)
+        .bind(owner)
         .execute(&self.0)
         .await?;
         Ok(())
@@ -139,7 +156,8 @@ impl Store {
     ///
     /// - `filename` / `size`: `None` keeps the stored value.
     /// - `error`: authoritative. `Some` stores it, `None` clears any stored error.
-    /// - Terminal states stamp `finished_at`.
+    /// - Terminal states stamp `finished_at`; non-terminal states clear it.
+    /// - An unknown `id` is an error ("job not found").
     pub async fn set_state(
         &self,
         id: &str,
@@ -149,13 +167,13 @@ impl Store {
         error: Option<&ApiError>,
     ) -> Result<()> {
         let finished_at = is_terminal(state).then(now);
-        sqlx::query(
+        let res = sqlx::query(
             "UPDATE jobs SET state = ?, \
              filename = COALESCE(?, filename), \
              size = COALESCE(?, size), \
              error_code = ?, \
              error_message = ?, \
-             finished_at = COALESCE(?, finished_at) \
+             finished_at = ? \
              WHERE id = ?",
         )
         .bind(to_wire(&state)?)
@@ -167,6 +185,7 @@ impl Store {
         .bind(id)
         .execute(&self.0)
         .await?;
+        anyhow::ensure!(res.rows_affected() == 1, "job not found: {id}");
         Ok(())
     }
 

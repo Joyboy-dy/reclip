@@ -37,8 +37,8 @@ async function dlCard(idx: number): Promise<void> {
     const job = await createJob({
       url: c.url,
       format,
-      format_id: format === "mp4" ? (c.selectedFormat ?? null) : null,
-      title: c.info?.title ?? null,
+      format_id: format === "mp4" ? c.selectedFormat ?? undefined : undefined,
+      title: c.info?.title,
     });
     jobId = job.id;
     c.jobId = jobId;

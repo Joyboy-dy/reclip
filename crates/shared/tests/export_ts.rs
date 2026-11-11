@@ -26,6 +26,7 @@ fn generate() -> String {
         decl::<ProbeRequest>(&cfg),
         decl::<CreateJobRequest>(&cfg),
         decl::<Job>(&cfg),
+        decl::<JobList>(&cfg),
         decl::<PublicConfig>(&cfg),
     ] {
         out.push('\n');
