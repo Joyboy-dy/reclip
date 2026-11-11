@@ -12,3 +12,6 @@ assets/*.mov
 # YouTube session cookies: never commit them
 cookies*.txt
 /target
+
+web/node_modules
+web/dist

@@ -1,0 +1,86 @@
+:root {
+  --bg: #f4f1eb;
+  --fg: #3a3a38;
+  --accent: #e85d2a;
+  --accent-hover: #d04e1f;
+  --muted: #9c9889;
+  --card: #fff;
+  --card-border: #e2ded6;
+  --success: #2d8a4e;
+  --error: #c43d3d;
+  --radius: 14px;
+  --shimmer: linear-gradient(90deg, #ebe8e2 25%, #f0ede7 50%, #ebe8e2 75%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'DM Mono', monospace;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.03;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-size: 128px;
+}
+
+.page {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 60px 24px 80px;
+}
+
+.brand { margin-bottom: 48px; }
+.brand h1 {
+  font-family: 'Instrument Serif', serif;
+  font-size: 4.2rem;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--fg);
+}
+.brand h1 em { font-style: italic; color: var(--accent); }
+.brand p {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.footer {
+  margin-top: 48px;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.8;
+}
+
+/* Mobile */
+@media (max-width: 500px) {
+  .brand h1 { font-size: 3rem; }
+  .page { padding: 40px 16px 60px; }
+}
+
+.footer .telegram {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--muted);
+  text-decoration: none;
+  letter-spacing: 0.05em;
+  transition: color 0.2s;
+}
+.footer .telegram:hover { color: var(--accent); }
+.footer .telegram svg { width: 14px; height: 14px; }
