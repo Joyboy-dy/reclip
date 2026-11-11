@@ -23,3 +23,7 @@ tempfile = "3"
 which = "8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["process", "time", "rt", "macros", "io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }
