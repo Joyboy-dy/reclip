@@ -66,6 +66,15 @@ impl Store {
             .collect()
     }
 
+    /// Ids of every `done` job.
+    pub async fn done_ids(&self) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar("SELECT id FROM jobs WHERE state = 'done'")
+                .fetch_all(&self.0)
+                .await?,
+        )
+    }
+
     /// Fail every `downloading`/`processing` job (server restart recovery).
     /// Returns the affected ids.
     pub async fn mark_interrupted(&self) -> Result<Vec<String>> {

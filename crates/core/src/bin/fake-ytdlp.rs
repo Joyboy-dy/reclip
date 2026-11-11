@@ -103,6 +103,11 @@ fn main() {
         return;
     }
     if let Some(template) = value("-o") {
+        // Record the arguments so tests can assert on them.
+        if let Some(dir) = std::path::Path::new(&template).parent() {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("args.txt"), args.join("\n")).unwrap();
+        }
         for done in [200, 400, 600, 800, 1000] {
             progress(&done.to_string(), "1000", "NA", "NA", "NA");
         }

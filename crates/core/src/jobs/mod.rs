@@ -7,9 +7,11 @@
 //! and callers that need the worker gone await its `finished` token: dropping
 //! a download future would orphan yt-dlp's children.
 
+pub mod cleanup;
 pub mod hub;
 pub mod progress_tracker;
 pub mod queue;
+pub mod recovery;
 mod sched;
 #[cfg(test)]
 mod tests;
@@ -19,6 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use reclip_shared::{ApiError, CreateJobRequest, Job, JobState};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use sched::{Sched, Tracked};
 
@@ -66,6 +69,8 @@ struct Inner {
     store: Store,
     hub: Hub,
     sched: Mutex<Sched>,
+    /// Cancelled by `shutdown`, for background loops.
+    shutdown: CancellationToken,
 }
 
 /// Owns job scheduling and execution. Cheap to clone.
@@ -81,6 +86,7 @@ impl JobManager {
             cfg,
             store,
             hub: Hub::new(),
+            shutdown: CancellationToken::new(),
         };
         JobManager {
             inner: Arc::new(inner),
@@ -93,6 +99,11 @@ impl JobManager {
 
     pub fn store(&self) -> &Store {
         &self.inner.store
+    }
+
+    /// Cancelled when [`JobManager::shutdown`] starts.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.inner.shutdown.clone()
     }
 
     pub fn hub(&self) -> &Hub {

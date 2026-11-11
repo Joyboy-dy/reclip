@@ -61,6 +61,15 @@ pub fn now_plus(d: std::time::Duration) -> String {
     timestamp(at)
 }
 
+/// [`now`] minus `d`, in the same format.
+pub fn now_minus(d: std::time::Duration) -> String {
+    let at = chrono::TimeDelta::from_std(d)
+        .ok()
+        .and_then(|d| chrono::Utc::now().checked_sub_signed(d))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC);
+    timestamp(at)
+}
+
 fn timestamp(at: chrono::DateTime<chrono::Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

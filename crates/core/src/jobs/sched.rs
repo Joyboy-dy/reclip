@@ -69,6 +69,7 @@ impl JobManager {
     /// wait for the workers (they record `failed`/`interrupted`). Queued jobs
     /// stay `queued` in the store for the next start.
     pub async fn shutdown(&self) {
+        self.inner.shutdown.cancel();
         let finished: Vec<CancellationToken> = {
             let mut s = self.sched();
             s.stopping = true;
