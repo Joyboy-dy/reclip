@@ -7,6 +7,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
+# JavaScript runtime used by yt-dlp to solve YouTube's challenges.
+# Without one, YouTube formats go missing or downloads fail. Deno is yt-dlp's
+# default and recommended runtime (Bun support is deprecated, yt-dlp#16766).
+COPY --from=denoland/deno:bin-2.5.6 /deno /usr/local/bin/deno
+
 WORKDIR /app
 
 COPY requirements.txt .

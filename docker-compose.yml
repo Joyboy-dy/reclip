@@ -7,6 +7,13 @@ services:
       - "8899:8899"
     volumes:
       - reclip-downloads:/app/downloads
+      # YouTube blocks most server IPs ("Sign in to confirm you're not a bot").
+      # Export cookies.txt from a logged-in browser, put it next to this file,
+      # then uncomment the two lines below. See README > YouTube on a server.
+      # - ./cookies.txt:/run/secrets/cookies.txt:ro
+    # environment:
+    #   RECLIP_COOKIES: /run/secrets/cookies.txt
+    #   RECLIP_PROXY: socks5://user:pass@host:1080
     restart: unless-stopped
 
 volumes:

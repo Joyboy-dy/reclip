@@ -6,6 +6,8 @@ import subprocess
 import threading
 from flask import Flask, request, jsonify, send_file, render_template
 
+import ytdlp_options
+
 app = Flask(__name__)
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -29,11 +31,18 @@ def parse_ytdlp_json(stdout):
     raise ValueError("yt-dlp returned no data")
 
 
+def run_ytdlp(args, timeout):
+    """Run yt-dlp with the shared session options (cookies, proxy, JS runtime)."""
+    with ytdlp_options.session_args() as extra:
+        cmd = ["yt-dlp", *extra, *args]
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
-    cmd = ["yt-dlp", "--no-playlist", "-o", out_template]
+    cmd = ["--no-playlist", "-o", out_template]
 
     if format_choice == "audio":
         cmd += ["-x", "--audio-format", "mp3"]
@@ -45,10 +54,10 @@ def run_download(job_id, url, format_choice, format_id):
     cmd.append(url)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = run_ytdlp(cmd, timeout=300)
         if result.returncode != 0:
             job["status"] = "error"
-            job["error"] = result.stderr.strip().split("\n")[-1]
+            job["error"] = ytdlp_options.error_message(result.stderr)
             return
 
         files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*"))
@@ -101,11 +110,10 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--no-playlist", "-j", url]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = run_ytdlp(["--no-playlist", "-j", url], timeout=60)
         if result.returncode != 0:
-            return jsonify({"error": result.stderr.strip().split("\n")[-1]}), 400
+            return jsonify({"error": ytdlp_options.error_message(result.stderr)}), 400
 
         info = parse_ytdlp_json(result.stdout)
 
@@ -147,11 +155,10 @@ def get_playlist_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--flat-playlist", "-J", url]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = run_ytdlp(["--flat-playlist", "-J", url], timeout=60)
         if result.returncode != 0:
-            return jsonify({"error": result.stderr.strip().split("\n")[-1]}), 400
+            return jsonify({"error": ytdlp_options.error_message(result.stderr)}), 400
 
         info = json.loads(result.stdout)
         entries = info.get("entries", [])

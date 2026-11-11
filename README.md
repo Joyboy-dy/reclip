@@ -36,6 +36,27 @@ Or with Docker:
 docker build -t reclip . && docker run -p 8899:8899 reclip
 ```
 
+## Configuration
+
+| Variable | Purpose |
+|---|---|
+| `RECLIP_COOKIES` | Path to a Netscape `cookies.txt`, passed to yt-dlp. Required for YouTube on most servers. |
+| `RECLIP_PROXY` | Proxy for every yt-dlp call, e.g. `socks5://127.0.0.1:7897`. |
+| `RECLIP_JS_RUNTIME` | Force the JS runtime for YouTube challenges (`deno`, `bun`, `node`, `quickjs`, or `name:/path`). Detected automatically otherwise. |
+| `RECLIP_NO_UPDATE` | Skip the yt-dlp update on start. |
+
+### YouTube on a server
+
+YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. To get past it:
+
+1. Use a secondary Google account: accounts used with yt-dlp can get flagged.
+2. In a private browser window, log in to YouTube, export the cookies with an extension such as *Get cookies.txt LOCALLY*, then close the window without browsing further (YouTube rotates the cookies of open sessions).
+3. Copy the file to the server and point `RECLIP_COOKIES` to it (with Docker Compose, uncomment the lines in `docker-compose.yml`).
+
+ReClip uses a per-request copy, so the original file is never modified. When the cookies expire, the error message says so: export new ones.
+
+YouTube also requires a JavaScript runtime: the Docker image ships Deno. When running `reclip.sh`, install [Deno](https://deno.com) (recommended by yt-dlp). Bun 1.2.11 to 1.3.14 and Node also work as fallbacks.
+
 ## Usage
 
 1. Paste one or more video URLs into the input box
@@ -55,7 +76,7 @@ YouTube, TikTok, Instagram, Twitter/X, Reddit, Facebook, Vimeo, Twitch, Dailymot
 - **Backend:** Python + Flask (~150 lines)
 - **Frontend:** Vanilla HTML/CSS/JS (single file, no build step)
 - **Download engine:** [yt-dlp](https://github.com/yt-dlp/yt-dlp) + [ffmpeg](https://ffmpeg.org/)
-- **Dependencies:** 2 (Flask, yt-dlp)
+- **Dependencies:** 2 (Flask, yt-dlp with yt-dlp-ejs), plus a JS runtime (Deno in Docker) for YouTube
 
 ## Disclaimer
 

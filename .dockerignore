@@ -13,3 +13,7 @@ Dockerfile
 .env.*
 .vscode
 .idea
+venv
+tests
+.pytest_cache
+cookies*.txt
