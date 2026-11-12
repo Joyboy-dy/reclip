@@ -5,9 +5,9 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::http::HeaderValue;
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
-use axum::http::{HeaderValue, Method};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use reclip_shared::{ApiKeyInfo, ErrorCode, Scope};
@@ -15,7 +15,6 @@ use reclip_shared::{ApiKeyInfo, ErrorCode, Scope};
 use super::cookie;
 use super::ip::{Forwarded, forwarded};
 use super::keys::{KeyError, verify_key};
-use super::origin::same_origin;
 use crate::app::AppState;
 use crate::config::{Config, Limits};
 use crate::http::{HttpError, api_error};
@@ -86,11 +85,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Forwarded {
     }
 }
 
-fn error(code: ErrorCode, message: &str) -> Response {
+pub(crate) fn error(code: ErrorCode, message: &str) -> Response {
     HttpError(api_error(code, message)).into_response()
 }
 
-fn unauthorized(message: &str) -> Response {
+/// 401 `unauthorized` with a `WWW-Authenticate: Bearer` challenge.
+pub(crate) fn unauthorized(message: &str) -> Response {
     let challenge = [(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))];
     (
         challenge,
@@ -108,6 +108,7 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip());
     let mut fwd = forwarded(peer, &parts.headers, &s.cfg.trusted_proxies);
+    s.site.learn(&s.store, &fwd).await;
     if fwd.host.is_none() {
         // HTTP/2 carries the host in the `:authority` pseudo-header.
         fwd.host = parts.uri.authority().map(|a| a.to_string());
@@ -153,40 +154,11 @@ async fn resolve(
         };
         return Ok((caller, None));
     }
-    let open_route = parts.method == Method::GET && parts.uri.path() == "/api/v1/config";
-    if !s.cfg.public_web && !open_route {
-        return Err(unauthorized("An API key is required"));
-    }
-    let unsafe_method = matches!(
-        parts.method,
-        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
-    );
-    if unsafe_method && !same_origin(headers, fwd, s.cfg.public_url.as_deref()) {
-        return Err(error(ErrorCode::Forbidden, "Cross-site request refused"));
-    }
-    let (value, minted) = match cookie::value(headers) {
-        Some(v) => (v, false),
-        None => match cookie::generate() {
-            Some(v) => (v, true),
-            None => {
-                tracing::error!("no randomness for a visitor cookie");
-                return Err(error(ErrorCode::Internal, "Internal error"));
-            }
-        },
-    };
-    let caller = Caller {
-        owner: format!("web:{value}"),
-        quota_key: format!("ip:{}", fwd.client_ip),
-        kind: CallerKind::Visitor,
-        scopes: Scope::default_set(),
-        limits: Some(s.cfg.limits.web),
-        key_id: None,
-    };
-    Ok((caller, minted.then_some(value)))
+    cookie::visitor_caller(s, parts, fwd).map_err(|r| *r)
 }
 
 /// The token of `Bearer <token>` (scheme case-insensitive).
-fn bearer(v: &HeaderValue) -> Option<&str> {
+pub(crate) fn bearer(v: &HeaderValue) -> Option<&str> {
     let (scheme, token) = v.to_str().ok()?.trim().split_once(' ')?;
     let token = token.trim();
     (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
@@ -249,12 +221,14 @@ fn delegated_caller(
     })
 }
 
-/// `tg:` followed by 1 to 20 ASCII digits.
+/// `tg:` followed by 1 to 20 ASCII digits, without leading zeros, so one
+/// Telegram user has exactly one owner string.
 fn telegram_user(v: &HeaderValue) -> Option<String> {
     let s = v.to_str().ok()?;
     let digits = s.strip_prefix("tg:")?;
-    let ok =
-        (1..=MAX_TG_DIGITS).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit());
+    let ok = (1..=MAX_TG_DIGITS).contains(&digits.len())
+        && !digits.starts_with('0')
+        && digits.bytes().all(|b| b.is_ascii_digit());
     ok.then(|| s.to_string())
 }
 
@@ -271,6 +245,9 @@ mod tests {
         assert_eq!(bearer(&hv("Bearer")), None);
         assert_eq!(telegram_user(&hv("tg:42")).as_deref(), Some("tg:42"));
         assert_eq!(telegram_user(&hv(" tg:42")), None);
+        for bad in ["tg:042", "tg:0", "tg:00"] {
+            assert_eq!(telegram_user(&hv(bad)), None, "{bad}");
+        }
     }
 
     #[test]

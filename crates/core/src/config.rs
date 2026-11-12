@@ -5,6 +5,26 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// A secret string whose `Debug` output never shows the value.
+#[derive(Clone)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Secret {
+        Secret(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: String,
@@ -33,7 +53,8 @@ pub struct Config {
     pub trusted_proxies: Vec<IpNet>,
     /// Public base URL, without trailing slash.
     pub public_url: Option<String>,
-    pub admin_token: Option<String>,
+    /// `RECLIP_ADMIN_TOKEN`; when unset one is generated (see `Site::load`).
+    pub admin_token: Option<Secret>,
     /// Whether the web UI is open without an API key.
     pub public_web: bool,
     /// How long a signed download link stays valid.
@@ -78,6 +99,11 @@ fn parse_proxies(list: &str) -> Vec<IpNet> {
 }
 
 impl Config {
+    /// The SQLite database, shared by the server and the `keys` command.
+    pub fn db_path(&self) -> PathBuf {
+        self.data_dir.join("reclip.db")
+    }
+
     /// Build the config from an environment lookup. Empty values count as unset.
     pub fn from_env(env: &dyn Fn(&str) -> Option<String>) -> Config {
         let get = |k: &str| {
@@ -148,7 +174,7 @@ impl Config {
             public_url: get("RECLIP_PUBLIC_URL")
                 .map(|u| u.trim_end_matches('/').to_string())
                 .filter(|u| !u.is_empty()),
-            admin_token: get("RECLIP_ADMIN_TOKEN"),
+            admin_token: get("RECLIP_ADMIN_TOKEN").map(Secret),
             public_web,
             link_ttl: Duration::from_secs(num("RECLIP_LINK_TTL").unwrap_or(21600)),
             limits: TierLimits {
@@ -253,6 +279,18 @@ mod tests {
             .map(|s| s.parse().unwrap())
             .collect();
         assert_eq!(c.trusted_proxies, want);
+    }
+
+    #[test]
+    fn admin_token_redacted_in_debug() {
+        let c = Config::from_env(&|k| (k == "RECLIP_ADMIN_TOKEN").then(|| "s3cr3t-token".into()));
+        assert_eq!(
+            c.admin_token.as_ref().map(Secret::expose),
+            Some("s3cr3t-token")
+        );
+        let dbg = format!("{c:?}");
+        assert!(!dbg.contains("s3cr3t-token"), "{dbg}");
+        assert!(dbg.contains("<redacted>"), "{dbg}");
     }
 
     #[test]

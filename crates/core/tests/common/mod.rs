@@ -11,9 +11,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reclip_core::access::keys::create_key;
+use reclip_core::access::secrets::Site;
 use reclip_core::access::ssrf::{Resolver, static_resolver};
 use reclip_core::app::{AppState, router, serve};
-use reclip_core::config::Config;
+use reclip_core::config::{Config, Secret};
 use reclip_core::jobs::JobManager;
 use reclip_core::store::Store;
 use reclip_shared::{CreateKeyRequest, Scope};
@@ -26,10 +27,14 @@ const DEADLINE: Duration = Duration::from_secs(20);
 
 pub const ON_BEHALF_OF: &str = "x-reclip-on-behalf-of";
 
+/// The admin token every test server is configured with.
+pub const ADMIN_TOKEN: &str = "rca_test-admin-token";
+
 /// A running server. Derefs to a default visitor (cookies + same-site Origin).
 pub struct TestServer {
     pub base: String,
     pub store: Store,
+    pub site: Site,
     pub jobs: JobManager,
     pub downloads: PathBuf,
     pub visitor: Visitor,
@@ -76,10 +81,12 @@ impl TestServer {
         cfg.downloads_dir = downloads.path().to_path_buf();
         cfg.web_dir = web.path().to_path_buf();
         cfg.job_timeout = Duration::from_secs(60);
+        cfg.admin_token = Some(Secret::new(ADMIN_TOKEN));
         tweak(&mut cfg);
         let downloads_dir = cfg.downloads_dir.clone();
         let store = Store::memory().await;
-        let mut state = AppState::new(Arc::new(cfg), store.clone());
+        let site = Site::load(&cfg, &store).await.unwrap();
+        let mut state = AppState::new(Arc::new(cfg), store.clone(), site.clone());
         state.resolver = resolver;
         let jobs = state.jobs.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -89,6 +96,7 @@ impl TestServer {
             visitor: Visitor::new(&base),
             base,
             store,
+            site,
             jobs,
             downloads: downloads_dir,
             _dirs: (downloads, web),
@@ -106,6 +114,11 @@ impl TestServer {
             limits: None,
         };
         create_key(&self.store, req).await.unwrap().key
+    }
+
+    /// A client sending `Authorization: Bearer <admin token>`.
+    pub fn admin(&self) -> Agent {
+        Agent::new(&self.base, ADMIN_TOKEN)
     }
 
     /// An agent holding a fresh key with exactly `scopes`.

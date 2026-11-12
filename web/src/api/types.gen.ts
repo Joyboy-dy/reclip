@@ -48,7 +48,17 @@ expires_at: string | null, };
 
 export type JobList = { jobs: Array<Job>, };
 
-export type PublicConfig = { version: string, telegram_bot_username: string | null, playlist_limit: number, };
+export type PublicLimits = { probes_per_minute: number, jobs_per_hour: number, max_active: number, };
+
+export type PublicConfig = { version: string, telegram_bot_username: string | null, playlist_limit: number, 
+/**
+ * Whether the site works without an API key.
+ */
+public_web: boolean, limits: PublicLimits, 
+/**
+ * Longest accepted media, in seconds.
+ */
+max_duration: number, };
 
 export type LinkResponse = { url: string, 
 /**

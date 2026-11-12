@@ -27,6 +27,7 @@ fn generate() -> String {
         decl::<CreateJobRequest>(&cfg),
         decl::<Job>(&cfg),
         decl::<JobList>(&cfg),
+        decl::<PublicLimits>(&cfg),
         decl::<PublicConfig>(&cfg),
         decl::<LinkResponse>(&cfg),
         decl::<Scope>(&cfg),

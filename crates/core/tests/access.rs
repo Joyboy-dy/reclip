@@ -48,6 +48,28 @@ async fn visitor_without_origin_cannot_post() {
     expect_error(bare.cancel(&id).await, 403, "forbidden").await;
     let l: Value = s.get("/api/v1/jobs").await.json().await.unwrap();
     assert_eq!(l["jobs"].as_array().unwrap().len(), 1);
+    // Only GET, HEAD and OPTIONS are exempt, whatever the method name.
+    for m in ["PUT", "PATCH", "PURGE"] {
+        let m = reqwest::Method::from_bytes(m.as_bytes()).unwrap();
+        let r = bare.client.request(m, format!("{}/api/v1/jobs", s.base));
+        expect_error(r.send().await.unwrap(), 403, "forbidden").await;
+    }
+}
+
+#[tokio::test]
+async fn origin_scheme_follows_the_proxy() {
+    let s = TestServer::start(|c| c.public_url = Some("https://other.example".into())).await;
+    let post = |origin: &str| {
+        s.client
+            .post(format!("{}/api/v1/jobs", s.base))
+            .header("x-forwarded-proto", "https")
+            .header("x-forwarded-host", "r.example")
+            .header("origin", origin)
+            .json(&job_body())
+            .send()
+    };
+    expect_error(post("http://r.example").await.unwrap(), 403, "forbidden").await;
+    assert_eq!(post("https://r.example").await.unwrap().status(), 202);
 }
 
 #[tokio::test]
@@ -190,7 +212,9 @@ async fn delegation_header_validated() {
     let s = TestServer::start(|_| {}).await;
     let bot = s.agent(&with_delegate()).await;
     let too_long = format!("tg:{}", "1".repeat(21));
-    for who in ["tg:abc", "tg:", "42", "tg:-1", "TG:42", "web:42", &too_long] {
+    for who in [
+        "tg:abc", "tg:", "42", "tg:-1", "TG:42", "web:42", "tg:042", "tg:0", &too_long,
+    ] {
         let r = bot.on_behalf_of(who).get("/api/v1/jobs").await;
         expect_error(r, 400, "invalid_request").await;
     }

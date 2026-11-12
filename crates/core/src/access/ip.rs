@@ -12,6 +12,9 @@ pub struct Forwarded {
     pub trusted_peer: bool,
     pub https: bool,
     pub host: Option<String>,
+    /// A trusted proxy sent `X-Forwarded-Proto` (http or https) and
+    /// `X-Forwarded-Host`: `https` and `host` name the public origin.
+    pub forwarded_origin: bool,
 }
 
 /// Map IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) to plain IPv4.
@@ -51,6 +54,7 @@ pub fn forwarded(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpNet]) -
             trusted_peer: false,
             https: false,
             host: host_header(),
+            forwarded_origin: false,
         };
     };
     if !is_trusted(&peer) {
@@ -59,6 +63,7 @@ pub fn forwarded(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpNet]) -
             trusted_peer: false,
             https: false,
             host: host_header(),
+            forwarded_origin: false,
         };
     }
 
@@ -78,20 +83,20 @@ pub fn forwarded(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpNet]) -
         last_trusted = Some(ip);
     }
     let client_ip = found.or(last_trusted).unwrap_or(peer);
-    let https = list_entries(headers, "x-forwarded-proto")
-        .last()
-        .is_some_and(|p| p.eq_ignore_ascii_case("https"));
-    let host = header_str(headers, "x-forwarded-host")
+    let proto = list_entries(headers, "x-forwarded-proto").last().copied();
+    let https = proto.is_some_and(|p| p.eq_ignore_ascii_case("https"));
+    let fwd_host = header_str(headers, "x-forwarded-host")
         .and_then(|v| v.split(',').next())
         .map(str::trim)
         .filter(|h| !h.is_empty())
-        .map(String::from)
-        .or_else(host_header);
+        .map(String::from);
+    let web_proto = proto.is_some_and(|p| https || p.eq_ignore_ascii_case("http"));
     Forwarded {
         client_ip,
         trusted_peer: true,
         https,
-        host,
+        forwarded_origin: web_proto && fwd_host.is_some(),
+        host: fwd_host.or_else(host_header),
     }
 }
 
@@ -131,8 +136,21 @@ mod tests {
         ]);
         let f = forwarded(Some(ip("10.0.1.9")), &h, &nets());
         assert_eq!(f.client_ip, ip("203.0.113.7"));
-        assert!(f.trusted_peer && f.https);
+        assert!(f.trusted_peer && f.https && f.forwarded_origin);
         assert_eq!(f.host.as_deref(), Some("r.example"));
+        // The host alone, or a proto that is not http(s), is not an origin.
+        let h = hm(&[("x-forwarded-host", "r.example"), ("host", "internal")]);
+        assert!(!forwarded(Some(ip("10.0.1.9")), &h, &nets()).forwarded_origin);
+        let h = hm(&[
+            ("x-forwarded-proto", "wss"),
+            ("x-forwarded-host", "r.example"),
+        ]);
+        assert!(!forwarded(Some(ip("10.0.1.9")), &h, &nets()).forwarded_origin);
+        let h = hm(&[
+            ("x-forwarded-proto", "http"),
+            ("x-forwarded-host", "r.example"),
+        ]);
+        assert!(forwarded(Some(ip("10.0.1.9")), &h, &nets()).forwarded_origin);
         // A forged leftmost entry does not win over the real one.
         let h = hm(&[("x-forwarded-for", "1.1.1.1, 203.0.113.7, 10.0.0.3")]);
         let f = forwarded(Some(ip("10.0.1.9")), &h, &nets());
@@ -178,7 +196,7 @@ mod tests {
         ]);
         let f = forwarded(Some(ip("198.51.100.2")), &h, &nets());
         assert_eq!(f.client_ip, ip("198.51.100.2"));
-        assert!(!f.trusted_peer && !f.https);
+        assert!(!f.trusted_peer && !f.https && !f.forwarded_origin);
         assert_eq!(f.host.as_deref(), Some("real"));
     }
 

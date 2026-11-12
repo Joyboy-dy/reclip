@@ -10,6 +10,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::access::caller::caller_layer;
 use crate::access::limits::Limiter;
+use crate::access::secrets::Site;
 use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
 use crate::http;
@@ -22,18 +23,21 @@ pub struct AppState {
     pub store: Store,
     pub jobs: JobManager,
     pub limiter: Limiter,
+    /// Admin token, link key and public URL.
+    pub site: Site,
     /// DNS resolver used by the SSRF guard; tests swap in a static one.
     pub resolver: Resolver,
 }
 
 impl AppState {
-    pub fn new(cfg: Arc<Config>, store: Store) -> AppState {
+    pub fn new(cfg: Arc<Config>, store: Store, site: Site) -> AppState {
         let jobs = JobManager::new(cfg.clone(), store.clone());
         AppState {
             cfg,
             store,
             jobs,
             limiter: Limiter::new(),
+            site,
             resolver: system_resolver(),
         }
     }
@@ -58,8 +62,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
+    // Admin routes carry their own token check, outside `caller_layer`.
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .merge(http::admin::routes(state.clone()))
         .merge(api)
         .fallback_service(web)
         .with_state(state)

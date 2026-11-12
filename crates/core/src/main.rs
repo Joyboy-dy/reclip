@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use reclip_core::access::secrets::Site;
 use reclip_core::app::{AppState, router, serve};
+use reclip_core::cli;
 use reclip_core::config::Config;
 use reclip_core::healthcheck;
 use reclip_core::jobs::cleanup::spawn_cleanup;
@@ -20,6 +22,9 @@ async fn main() -> anyhow::Result<()> {
         let ok = healthcheck::probe(cfg.port, healthcheck::TIMEOUT).await;
         std::process::exit(if ok { 0 } else { 1 });
     }
+    if let Some(code) = cli::run(&args).await? {
+        std::process::exit(code);
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -28,9 +33,12 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_env(&|k| std::env::var(k).ok());
     std::fs::create_dir_all(&cfg.data_dir).context("create data dir")?;
     std::fs::create_dir_all(&cfg.downloads_dir).context("create downloads dir")?;
-    let store = Store::open(&cfg.data_dir.join("reclip.db")).await?;
+    let store = Store::open(&cfg.db_path()).await?;
+    let site = Site::load(&cfg, &store)
+        .await
+        .context("load server secrets")?;
     let addr = format!("{}:{}", cfg.host, cfg.port);
-    let state = AppState::new(Arc::new(cfg), store);
+    let state = AppState::new(Arc::new(cfg), store, site);
     let jobs = state.jobs.clone();
     let report = recover(&jobs).await.context("recover jobs")?;
     tracing::info!(

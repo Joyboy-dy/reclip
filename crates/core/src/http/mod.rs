@@ -1,5 +1,6 @@
 //! HTTP layer: error mapping and request helpers.
 
+pub mod admin;
 pub mod config;
 pub mod events;
 pub mod files;
