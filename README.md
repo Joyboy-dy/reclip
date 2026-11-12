@@ -184,7 +184,23 @@ Claude Code:
 claude mcp add --transport http reclip https://reclip.example.com/mcp --header "Authorization: Bearer rck_xxxxxxxx_..."
 ```
 
-Claude Desktop and other clients: add a remote (custom) connector with the URL `https://reclip.example.com/mcp` and the same `Authorization` header. A client that cannot send a custom header cannot use `/mcp`.
+Claude Desktop: its custom connector screen takes a URL and optional OAuth settings, not custom headers. Use the `mcp-remote` bridge in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "reclip": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://reclip.example.com/mcp", "--header", "Authorization:${RECLIP_AUTH}"],
+      "env": { "RECLIP_AUTH": "Bearer rck_xxxxxxxx_..." }
+    }
+  }
+}
+```
+
+The header value goes through an env var because some platforms mangle spaces in args.
+
+Other clients: any client that can send a custom header connects directly. A client that cannot send one cannot use `/mcp`.
 
 WebMCP needs no setup on your side, except the origin trial. Set `RECLIP_WEBMCP_TRIAL_TOKEN` to the token from the browser vendor. When it is set, every HTML page carries the origin-trial meta tag. When it is empty (the default), the page works as before.
 

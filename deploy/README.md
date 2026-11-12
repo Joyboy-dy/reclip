@@ -92,7 +92,23 @@ Créez une clé avec la commande `keys create` ci-dessus, ou sur la page `/admin
 claude mcp add --transport http reclip https://reclip.example.com/mcp --header "Authorization: Bearer rck_…"
 ```
 
-Pour Claude Desktop ou un autre client, ajoutez un connecteur distant (personnalisé) avec l'URL `https://reclip.example.com/mcp` et le même en-tête `Authorization`. Un client qui ne peut pas envoyer d'en-tête personnalisé ne peut pas utiliser `/mcp`.
+Pour Claude Desktop, l'écran de connecteur personnalisé accepte une URL et des réglages OAuth facultatifs, pas d'en-têtes personnalisés. Utilisez le pont `mcp-remote` dans `claude_desktop_config.json` :
+
+```json
+{
+  "mcpServers": {
+    "reclip": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://reclip.example.com/mcp", "--header", "Authorization:${RECLIP_AUTH}"],
+      "env": { "RECLIP_AUTH": "Bearer rck_xxxxxxxx_..." }
+    }
+  }
+}
+```
+
+La valeur de l'en-tête passe par une variable d'environnement, car certaines plateformes déforment les espaces dans les arguments.
+
+Pour un autre client : tout client qui peut envoyer un en-tête personnalisé se connecte directement. Un client qui n'en est pas capable ne peut pas utiliser `/mcp`.
 
 Les six outils (`probe_media`, `start_download`, `list_downloads`, `get_download`, `cancel_download`, `get_transcript`) sont aussi exposés par WebMCP sur la page publique, quand le navigateur gère l'API (Chrome, derrière un drapeau ou un origin trial). WebMCP n'utilise aucune clé : il agit avec le cookie du visiteur et ses limites. Les téléchargements lancés par un agent apparaissent sous forme de cartes sur la page, et le navigateur ne les enregistre pas automatiquement.
 

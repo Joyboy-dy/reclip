@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import tools from "../src/api/tools.gen.json";
 import type { Job } from "../src/api/types.gen";
-import { fetchLinks } from "../src/public/downloads";
+import { download, fetchLinks, restore } from "../src/public/downloads";
 import { initialState, store } from "../src/public/store";
-import { type ModelContextLike, registerWebMcp } from "../src/public/webmcp";
+import { type ModelContextLike, registerWebMcp, registerWhenPublic } from "../src/public/webmcp";
 
 type Call = { path: string; method: string; body?: any };
 let calls: Call[] = [];
@@ -205,7 +205,7 @@ test("inputs are checked against the tool schemas", async () => {
   expect(store.get().cards).toHaveLength(0);
 });
 
-test("an agent's job does not save the file in the browser; the agent gets file_url", async () => {
+test("an agent's job does not save the file in the browser; the agent gets download_url", async () => {
   let clicks = 0;
   (globalThis as { document?: unknown }).document = {
     createElement: () => ({ click: () => clicks++, remove() {} }),
@@ -220,7 +220,7 @@ test("an agent's job does not save the file in the browser; the agent gets file_
   for (let i = 0; i < 50 && store.get().cards[0].status !== "done"; i++) await Bun.sleep(10);
   expect(store.get().cards[0].status).toBe("done");
   expect(clicks).toBe(0);
-  expect((await call(t.get_download, { id: "j1" })).body.file_url).toBe("/api/v1/jobs/j1/file");
+  expect((await call(t.get_download, { id: "j1" })).body.download_url).toBe("/api/v1/jobs/j1/file");
 });
 const u1 = "https://y/v";
 
@@ -248,18 +248,18 @@ test("server error codes are kept", async () => {
   expect((await call(t.start_download, { url: "https://y/other" })).body.code).toBe("forbidden");
 });
 
-test("get_download carries file_url only when done; list and transcript use the API", async () => {
+test("get_download carries download_url only when done; list and transcript use the API", async () => {
   const t = setup();
   reply = () => json(job({ state: "downloading", progress: 40 }));
-  expect((await call(t.get_download, { id: "j1" })).body).not.toHaveProperty("file_url");
+  expect((await call(t.get_download, { id: "j1" })).body).not.toHaveProperty("download_url");
   reply = () => json(job({ state: "done" }));
-  expect((await call(t.get_download, { id: "j1" })).body.file_url).toBe("/api/v1/jobs/j1/file");
+  expect((await call(t.get_download, { id: "j1" })).body.download_url).toBe("/api/v1/jobs/j1/file");
 
   store.set({ cards: [{ key: "c9", url: "https://y/w", status: "ready" }, { key: "c8", url: "https://y/e", status: "info-error" }] });
   reply = () => json({ jobs: [job({ state: "done" })] });
   const list = await call(t.list_downloads, {});
-  expect(list.body.downloads.map((d: { id: string; state: string }) => [d.id, d.state])).toEqual([["c9", "pending"], ["j1", "done"]]);
-  expect(list.body.downloads[1].file_url).toBe("/api/v1/jobs/j1/file");
+  expect(list.body.jobs.map((d: { id: string; state: string }) => [d.id, d.state])).toEqual([["c9", "pending"], ["j1", "done"]]);
+  expect(list.body.jobs[1].download_url).toBe("/api/v1/jobs/j1/file");
 
   reply = () => json({ language: "en", automatic: false, text: "hi" });
   const tr = await call(t.get_transcript, { url: u1, language: "en" });
@@ -277,4 +277,106 @@ test("a rate-limited creation returns a waiting card at once", async () => {
   expect(got.body).toMatchObject({ state: "pending", id: r.body.id });
   expect((await call(t.cancel_download, { id: r.body.id })).body.state).toBe("cancelled");
   expect(store.get().cards).toHaveLength(0);
+});
+
+// A fake sessionStorage (Bun has none) and a counting document for saveFile.
+function fakeBrowser() {
+  const mem = new Map<string, string>();
+  (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => void mem.set(k, v),
+  };
+  const state = { clicks: 0 };
+  (globalThis as { document?: unknown }).document = {
+    createElement: () => ({ click: () => state.clicks++, remove() {} }),
+    body: { appendChild() {} },
+  };
+  return state;
+}
+const finish = async (id: string, done: Job) => {
+  for (const es of FakeES.all) es.listeners.get("job")?.({ data: JSON.stringify(done) });
+  for (let i = 0; i < 50 && store.get().cards.find((c) => c.key === id)?.status !== "done"; i++) await Bun.sleep(10);
+};
+
+test("after a reload an agent's download is still not saved; a user's restored card is", async () => {
+  const saved = fakeBrowser();
+  try {
+    reply = (c) => (c.path === "/api/v1/probe" ? json(video) : json(job()));
+    await call(setup().start_download, { url: u1 });
+    store.set(initialState());
+    FakeES.all = [];
+    const done = job({ state: "done", filename: "t.mp4" });
+    reply = (c) => (c.path === "/api/v1/jobs" ? json({ jobs: [job()] }) : json(done));
+    await restore();
+    expect(store.get().cards.map((c) => [c.key, c.autoSave])).toEqual([["j1", false]]);
+    await finish("j1", done);
+    expect(saved.clicks).toBe(0);
+
+    store.set(initialState());
+    FakeES.all = [];
+    const mine = job({ id: "ju", url: "https://u/1" });
+    reply = (c) => (c.path === "/api/v1/jobs" ? json({ jobs: [mine] }) : json(done));
+    await restore();
+    expect(store.get().cards[0].autoSave).toBeUndefined();
+    await finish("ju", { ...done, id: "ju" });
+    expect(saved.clicks).toBe(1);
+  } finally {
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+  }
+});
+
+test("a broken sessionStorage never breaks starting or restoring", async () => {
+  (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+    getItem: () => { throw new Error("blocked"); },
+    setItem: () => { throw new Error("blocked"); },
+  };
+  try {
+    reply = (c) => (c.path === "/api/v1/probe" ? json(video) : json(job()));
+    expect((await call(setup().start_download, { url: u1 })).error).toBe(false);
+    reply = () => json({ jobs: [job()] });
+    store.set(initialState());
+    await restore();
+    expect(store.get().cards).toHaveLength(1);
+  } finally {
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+  }
+});
+
+test("cancel_download removes a card without a job only when it is an agent card", async () => {
+  const t = setup();
+  store.set({ cards: [{ key: "mine", url: u1, status: "ready" }, { key: "agent", url: u1, status: "ready", autoSave: false }] });
+  const mine = await call(t.cancel_download, { id: "mine" });
+  expect(mine).toEqual({ error: true, body: { code: "invalid_request", message: "Not a download" } });
+  expect(store.get().cards.map((c) => c.key)).toEqual(["mine", "agent"]);
+  expect((await call(t.cancel_download, { id: "agent" })).body).toEqual({ id: "agent", state: "cancelled" });
+  expect(store.get().cards.map((c) => c.key)).toEqual(["mine"]);
+});
+
+test("retrying a failed agent card reuses the agent's options, not the page's", async () => {
+  fakeBrowser();
+  try {
+    reply = (c) => (c.path === "/api/v1/probe" ? json(video) : json({ code: "internal", message: "x" }, 500));
+    await call(setup().start_download, { url: u1, format: "mkv", strip_metadata: true, clip: { start: 5, end: 9 } });
+    expect(store.get().cards[0].status).toBe("error");
+    store.set((s) => ({ options: { ...s.options, media: "audio", audio: "mp3", strip: false, clipOn: false } }));
+    calls = [];
+    reply = () => json(job());
+    await download(store.get().cards[0].key);
+    expect(calls.find((c) => c.path === "/api/v1/jobs")?.body).toMatchObject({
+      format: "mkv", strip_metadata: true, clip: { start: 5, end: 9 },
+    });
+  } finally {
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+  }
+});
+
+test("tools are registered only when public_web is on", () => {
+  const seen: string[] = [];
+  (globalThis as { document?: unknown }).document = { modelContext: { registerTool: (t: Registered) => void seen.push(t.name) } };
+  expect(registerWhenPublic({ public_web: false })).toBe(false);
+  expect(seen).toHaveLength(0);
+  expect(registerWhenPublic({ public_web: true })).toBe(true);
+  expect(seen).toHaveLength(6);
+  delete (globalThis as { document?: unknown }).document;
+  expect(registerWhenPublic({ public_web: true })).toBe(false);
 });
