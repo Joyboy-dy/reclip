@@ -173,3 +173,24 @@ async fn quota_shared_by_cookies_of_same_ip() {
     assert_eq!(a.post(JOBS, job_body("https://ok")).await.status(), 202);
     expect_limited(b.post(JOBS, job_body("https://ok")).await).await;
 }
+
+/// IPv6 visitors are counted per /64: rotating addresses inside one prefix
+/// does not buy more quota.
+#[tokio::test]
+async fn ipv6_visitors_share_their_64() {
+    let s = TestServer::start(|c| {
+        c.limits.web.jobs_per_hour = 1;
+        c.trusted_proxies = vec!["127.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    let from = |ip: &str| {
+        s.client
+            .post(format!("{}{JOBS}", s.base))
+            .header("x-forwarded-for", ip)
+            .json(&job_body("https://ok"))
+            .send()
+    };
+    assert_eq!(from("2001:db8:1:2::1").await.unwrap().status(), 202);
+    expect_limited(from("2001:db8:1:2:ffff:ffff:ffff:ffff").await.unwrap()).await;
+    assert_eq!(from("2001:db8:1:3::1").await.unwrap().status(), 202);
+}

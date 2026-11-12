@@ -4,10 +4,13 @@
 //! replaced by a fresh one; owners derived from it are never empty, so legacy
 //! rows with owner `''` stay unreachable.
 
+use std::net::IpAddr;
+
 use axum::http::header::COOKIE;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method};
 use axum::response::Response;
+use ipnet::Ipv6Net;
 use reclip_shared::{ErrorCode, Scope};
 
 use super::caller::{Caller, CallerKind, error, unauthorized};
@@ -49,7 +52,19 @@ pub fn set_cookie(value: &str, secure: bool) -> Option<HeaderValue> {
     HeaderValue::from_str(&c).ok()
 }
 
-/// A request without `Authorization`: an anonymous visitor, plus the cookie
+/// What a visitor's quotas count against: `ip:1.2.3.4`, or the /64 of an
+/// IPv6 address (`ip:2001:db8:1:2::/64`), which one host usually owns whole.
+pub fn ip_quota_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => format!("ip:{v4}"),
+        IpAddr::V6(v6) => match Ipv6Net::new(v6, 64) {
+            Ok(net) => format!("ip:{}", net.trunc()),
+            Err(_) => format!("ip:{v6}"),
+        },
+    }
+}
+
+/// A request without a `Bearer` credential: an anonymous visitor, plus the cookie
 /// value to set when one was just minted. Anything but GET, HEAD and
 /// OPTIONS needs an `Origin` naming this site. The refusal is boxed: it is
 /// the cold path and `Response` is large.
@@ -82,11 +97,29 @@ pub fn visitor_caller(
     };
     let caller = Caller {
         owner: format!("web:{value}"),
-        quota_key: format!("ip:{}", fwd.client_ip),
+        quota_key: ip_quota_key(fwd.client_ip),
         kind: CallerKind::Visitor,
         scopes: Scope::default_set(),
         limits: Some(s.cfg.limits.web),
         key_id: None,
     };
     Ok((caller, minted.then_some(value)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_key_groups_ipv6_by_64() {
+        let key = |s: &str| ip_quota_key(s.parse().unwrap());
+        assert_eq!(key("1.2.3.4"), "ip:1.2.3.4");
+        assert_eq!(key("2001:db8:1:2::1"), "ip:2001:db8:1:2::/64");
+        assert_eq!(
+            key("2001:db8:1:2:aaaa:bbbb:cccc:dddd"),
+            key("2001:db8:1:2::9")
+        );
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_eq!(key("::1"), "ip:::/64");
+    }
 }

@@ -34,7 +34,8 @@ pub enum CallerKind {
 pub struct Caller {
     /// Stored in `jobs.owner`: `web:<cookie>`, `key:<id>` or `tg:<user id>`.
     pub owner: String,
-    /// What quotas count against: `ip:<addr>`, `key:<id>` or `tg:<user id>`.
+    /// What quotas count against: `ip:<addr>` (an IPv6 /64), `key:<id>` or
+    /// `tg:<user id>`.
     pub quota_key: String,
     pub kind: CallerKind,
     pub scopes: Vec<Scope>,
