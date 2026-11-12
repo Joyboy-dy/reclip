@@ -232,6 +232,10 @@ fn playlist_only_links_are_recognised() {
         "https://www.youtube.com/watch?v=a&list=PL1",
         "https://www.youtube.com/watch?list=PL1&v=a",
         "https://youtu.be/a?list=PL1",
+        "https://www.youtube.com/shorts/a?list=PL1",
+        "https://www.youtube.com/live/a?list=PL1",
+        "https://www.youtube.com/embed/a?list=PL1",
+        "https://example.com/video?playlist=1",
         "https://www.youtube.com/watch?v=a",
         "https://example.com/video",
     ] {

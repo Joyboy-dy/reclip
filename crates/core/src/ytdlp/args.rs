@@ -68,8 +68,11 @@ pub fn session_args_with(
 /// A link that names a playlist and no single video: `probe_args` walks it
 /// with `--flat-playlist`, and a transcript refuses it.
 pub fn is_playlist_only(url: &str) -> bool {
-    let has_video = url.contains("?v=") || url.contains("&v=") || url.contains("youtu.be/");
-    !is_x_post(url) && url.contains("list=") && !has_video
+    let has_video = ["?v=", "&v=", "youtu.be/", "/shorts/", "/live/", "/embed/"]
+        .iter()
+        .any(|m| url.contains(m));
+    let has_list = url.contains("?list=") || url.contains("&list=");
+    !is_x_post(url) && has_list && !has_video
 }
 
 pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
