@@ -41,6 +41,9 @@ fn job(id: &str, state: JobState, format_id: Option<&str>) -> Job {
         speed: None,
         eta: None,
         created_at: reclip_core::store::now(),
+        clip: None,
+        strip_metadata: false,
+        resumable: false,
         expires_at: Some(reclip_core::store::now_plus(Duration::from_secs(3600))),
     }
 }
@@ -174,6 +177,9 @@ async fn failed_and_cancelled_jobs_expire_then_purge() {
         format: MediaFormat::Mp4,
         format_id: None,
         title: None,
+        clip: None,
+        strip_metadata: false,
+        playlist_item: None,
         thumbnail: None,
     };
     let failed = mgr

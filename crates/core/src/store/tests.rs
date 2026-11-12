@@ -1,5 +1,5 @@
 use super::Store;
-use reclip_shared::api::{Job, JobState, MediaFormat};
+use reclip_shared::api::{Clip, Job, JobState, MediaFormat};
 use reclip_shared::errors::{ApiError, ErrorCode};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -31,6 +31,80 @@ fn sample(id: &str) -> Job {
         eta: None,
         created_at: "2026-11-11T10:00:00.000Z".into(),
         expires_at: None,
+        clip: Some(Clip {
+            start: 1.5,
+            end: Some(9.0),
+        }),
+        strip_metadata: true,
+        resumable: false,
+    }
+}
+
+#[tokio::test]
+async fn new_columns_round_trip() {
+    let store = Store::memory().await;
+    let mut open_ended = sample("j2");
+    open_ended.clip = Some(Clip {
+        start: 3.0,
+        end: None,
+    });
+    open_ended.strip_metadata = false;
+    store
+        .insert_item(&open_ended, "", "", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(store.get("j2").await.unwrap(), Some(open_ended));
+    assert_eq!(store.playlist_item("j2").await.unwrap(), Some(2));
+    let mut plain = sample("j3");
+    plain.clip = None;
+    store.insert(&plain, "", "").await.unwrap();
+    assert_eq!(store.get("j3").await.unwrap(), Some(plain));
+    assert_eq!(store.playlist_item("j3").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn resumable_follows_state_error_and_expiry() {
+    let store = Store::memory().await;
+    let err = |code| {
+        Some(ApiError {
+            code,
+            message: "m".into(),
+        })
+    };
+    let future = super::now_plus(Duration::from_secs(3600));
+    let past = super::now_minus(Duration::from_secs(3600));
+    let cases = [
+        (JobState::Cancelled, None, Some(&future), true),
+        (
+            JobState::Failed,
+            err(ErrorCode::Interrupted),
+            Some(&future),
+            true,
+        ),
+        (
+            JobState::Failed,
+            err(ErrorCode::Timeout),
+            Some(&future),
+            true,
+        ),
+        (
+            JobState::Failed,
+            err(ErrorCode::BotCheck),
+            Some(&future),
+            false,
+        ),
+        (JobState::Cancelled, None, Some(&past), false),
+        (JobState::Done, None, Some(&future), false),
+        (JobState::Expired, None, Some(&future), false),
+    ];
+    for (i, (state, error, expires, want)) in cases.into_iter().enumerate() {
+        let mut job = sample(&format!("r{i}"));
+        job.state = state;
+        job.error = error;
+        job.expires_at = expires.cloned();
+        store.insert(&job, "", "").await.unwrap();
+        let got = store.get(&job.id).await.unwrap().unwrap();
+        assert_eq!(got.resumable, want, "case {i}: {state:?}");
     }
 }
 

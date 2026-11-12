@@ -17,5 +17,7 @@ pub async fn get_config(State(s): State<AppState>) -> Json<PublicConfig> {
             max_active: web.max_active,
         },
         max_duration: s.cfg.max_duration,
+        file_ttl_secs: s.cfg.file_ttl.as_secs(),
+        history_days: s.cfg.history_days,
     })
 }

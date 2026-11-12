@@ -21,6 +21,9 @@ fn job(id: &str, state: JobState) -> Job {
         eta: None,
         created_at: "2026-11-11T10:00:00.000Z".into(),
         expires_at: None,
+        clip: None,
+        strip_metadata: false,
+        resumable: false,
     }
 }
 
@@ -155,6 +158,10 @@ async fn legacy_failed_rows_get_expiry() {
         .unwrap();
     }
     sqlx::raw_sql(include_str!("../../migrations/0004_access.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0005_history_resume.sql"))
         .execute(&pool)
         .await
         .unwrap();

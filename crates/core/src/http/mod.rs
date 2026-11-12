@@ -1,12 +1,15 @@
 //! HTTP layer: error mapping and request helpers.
 
 pub mod admin;
+pub mod admin_session;
 pub mod config;
 pub mod events;
 pub mod files;
 pub mod headers;
+pub mod history;
 pub mod jobs;
 pub mod links;
+pub mod pages;
 pub mod probe;
 
 use axum::Json;

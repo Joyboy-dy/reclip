@@ -133,9 +133,12 @@ impl JobManager {
             eta: None,
             created_at: crate::store::now(),
             expires_at: None,
+            clip: req.clip,
+            strip_metadata: req.strip_metadata,
+            resumable: false,
         };
         self.store()
-            .insert(&job, owner, quota_key)
+            .insert_item(&job, owner, quota_key, req.playlist_item)
             .await
             .map_err(internal)?;
         self.enqueue(job.clone(), owner);

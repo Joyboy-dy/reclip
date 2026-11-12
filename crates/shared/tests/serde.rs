@@ -75,3 +75,72 @@ fn new_error_codes_status() {
     assert_eq!(ErrorCode::Unauthorized.http_status(), 401);
     assert_eq!(ErrorCode::Forbidden.http_status(), 403);
 }
+
+#[test]
+fn media_formats_use_lowercase_wire_names() {
+    for (f, s, audio) in [
+        (MediaFormat::Mp4, "mp4", false),
+        (MediaFormat::Mkv, "mkv", false),
+        (MediaFormat::Mov, "mov", false),
+        (MediaFormat::Mp3, "mp3", true),
+        (MediaFormat::M4a, "m4a", true),
+        (MediaFormat::Opus, "opus", true),
+        (MediaFormat::Flac, "flac", true),
+        (MediaFormat::Wav, "wav", true),
+    ] {
+        assert_eq!(serde_json::to_string(&f).unwrap(), format!("\"{s}\""));
+        assert_eq!(f.is_audio(), audio, "{s}");
+    }
+}
+
+#[test]
+fn history_clean_mode_wire_names() {
+    for (m, s) in [
+        (HistoryCleanMode::Expired, "expired"),
+        (HistoryCleanMode::OlderThan, "older_than"),
+        (HistoryCleanMode::All, "all"),
+    ] {
+        assert_eq!(serde_json::to_string(&m).unwrap(), format!("\"{s}\""));
+    }
+    let c: HistoryClean = serde_json::from_str(r#"{"mode":"older_than","days":7}"#).unwrap();
+    assert_eq!((c.mode, c.days), (HistoryCleanMode::OlderThan, Some(7)));
+    let c: HistoryClean = serde_json::from_str(r#"{"mode":"all"}"#).unwrap();
+    assert_eq!(c.days, None);
+}
+
+#[test]
+fn create_job_request_new_options_default() {
+    let r: CreateJobRequest = serde_json::from_str(r#"{"url":"u","format":"flac"}"#).unwrap();
+    assert_eq!(
+        (r.clip, r.strip_metadata, r.playlist_item),
+        (None, false, None)
+    );
+    let r: CreateJobRequest = serde_json::from_str(
+        r#"{"url":"u","format":"mkv","clip":{"start":1.5},"strip_metadata":true,"playlist_item":2}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        r.clip,
+        Some(Clip {
+            start: 1.5,
+            end: None
+        })
+    );
+    assert!(r.strip_metadata);
+    assert_eq!(r.playlist_item, Some(2));
+}
+
+#[test]
+fn admin_types_round_trip() {
+    let l: AdminLogin = serde_json::from_str(r#"{"email":"a@b.c","password":"p"}"#).unwrap();
+    assert_eq!(l.email, "a@b.c");
+    let p: AdminPasswordChange =
+        serde_json::from_str(r#"{"current":"a","new":"b","sign_out_others":true}"#).unwrap();
+    assert!(p.sign_out_others);
+    let me = serde_json::to_value(AdminMe {
+        email: "a@b.c".into(),
+        must_change_password: true,
+    })
+    .unwrap();
+    assert_eq!(me["must_change_password"], true);
+}
