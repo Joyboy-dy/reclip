@@ -12,7 +12,12 @@ export class ApiFailure extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const res = await send(path, init);
+  return (await res.json()) as T;
+}
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(path, { credentials: "same-origin", ...init });
   if (!res.ok) {
     let code: ErrorCode = "internal";
     let message = `Request failed (${res.status})`;
@@ -25,7 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiFailure(code, message, res.status);
   }
-  return (await res.json()) as T;
+  return res;
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -41,3 +46,11 @@ export const probe = (url: string): Promise<ProbeResponse> => postJson("/api/v1/
 export const createJob = (req: CreateJobRequest): Promise<Job> => postJson("/api/v1/jobs", req);
 export const getJob = (id: string): Promise<Job> => request(`/api/v1/jobs/${encodeURIComponent(id)}`);
 export const fileUrl = (id: string): string => `/api/v1/jobs/${encodeURIComponent(id)}/file`;
+export const listJobs = async (): Promise<Job[]> =>
+  (await request<{ jobs: Job[] }>("/api/v1/jobs")).jobs;
+export const cancelJob = (id: string): Promise<Job> =>
+  postJson(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, {});
+export const deleteJob = async (id: string): Promise<void> => {
+  await send(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+};
+export const eventsUrl = (id: string): string => `/api/v1/jobs/${encodeURIComponent(id)}/events`;

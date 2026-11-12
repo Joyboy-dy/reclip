@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use reclip_core::app::{AppState, router};
+use reclip_core::app::{AppState, router, serve};
 use reclip_core::config::Config;
 use reclip_core::healthcheck;
+use reclip_core::jobs::cleanup::spawn_cleanup;
+use reclip_core::jobs::recovery::recover;
 use reclip_core::store::Store;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -28,10 +30,16 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.downloads_dir).context("create downloads dir")?;
     let store = Store::open(&cfg.data_dir.join("reclip.db")).await?;
     let addr = format!("{}:{}", cfg.host, cfg.port);
-    let state = AppState {
-        cfg: Arc::new(cfg),
-        store,
-    };
+    let state = AppState::new(Arc::new(cfg), store);
+    let jobs = state.jobs.clone();
+    let report = recover(&jobs).await.context("recover jobs")?;
+    tracing::info!(
+        interrupted = report.interrupted,
+        requeued = report.requeued,
+        orphan_dirs = report.orphan_dirs,
+        "recovered jobs"
+    );
+    let cleanup = spawn_cleanup(jobs.clone());
     let app = router(state).layer(
         TraceLayer::new_for_http()
             .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -41,9 +49,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("bind {addr}"))?;
     tracing::info!(%addr, "listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // Stops running downloads through their tokens (never by dropping them)
+    // and ends open event streams before axum waits for connections.
+    serve(listener, app, jobs, shutdown_signal()).await?;
+    let _ = cleanup.await;
     tracing::info!("shut down");
     Ok(())
 }

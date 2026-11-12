@@ -22,12 +22,30 @@ export type ProbeResponse = { "kind": "video" } & VideoInfo | { "kind": "playlis
 
 export type ProbeRequest = { url: string, };
 
-export type CreateJobRequest = { url: string, format: MediaFormat, format_id: string | null, title: string | null, };
+export type CreateJobRequest = { url: string, format: MediaFormat, format_id?: string, title?: string, thumbnail?: string, };
 
-export type Job = { id: string, url: string, format: MediaFormat, title: string | null, state: JobState, filename: string | null, size: number | null, error: ApiError | null, 
+export type Job = { id: string, url: string, format: MediaFormat, format_id: string | null, title: string | null, thumbnail: string | null, state: JobState, filename: string | null, size: number | null, error: ApiError | null, 
+/**
+ * Live progress, 0 to 100. Never stored.
+ */
+progress: number | null, 
+/**
+ * Live speed in bytes per second. Never stored.
+ */
+speed: number | null, 
+/**
+ * Live ETA in seconds. Never stored.
+ */
+eta: number | null, 
 /**
  * RFC 3339 timestamp.
  */
-created_at: string, };
+created_at: string, 
+/**
+ * RFC 3339 timestamp.
+ */
+expires_at: string | null, };
+
+export type JobList = { jobs: Array<Job>, };
 
 export type PublicConfig = { version: string, telegram_bot_username: string | null, playlist_limit: number, };

@@ -32,3 +32,11 @@ fn http_status_mapping() {
     assert_eq!(ErrorCode::RateLimited.http_status(), 429);
     assert_eq!(ErrorCode::BotCheck.http_status(), 422);
 }
+
+#[test]
+fn create_job_request_accepts_missing_optionals() {
+    let r: CreateJobRequest = serde_json::from_str(r#"{"url":"u","format":"mp3"}"#).unwrap();
+    assert_eq!(r.format_id, None);
+    assert_eq!(r.title, None);
+    assert_eq!(r.thumbnail, None);
+}

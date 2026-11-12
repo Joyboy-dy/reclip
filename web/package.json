@@ -6,9 +6,11 @@
     "build": "bun run build.ts",
     "dev": "bun run build.ts --watch",
     "test": "bun test",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/bun": "latest",
     "typescript": "latest"
   }
