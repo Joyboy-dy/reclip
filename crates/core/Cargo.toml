@@ -1,0 +1,41 @@
+[package]
+name = "reclip-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "reclip-core"
+
+[lib]
+name = "reclip_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "reclip-core"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-ytdlp"
+path = "src/bin/fake-ytdlp.rs"
+
+[dependencies]
+reclip-shared = { path = "../shared" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
+tempfile = "3"
+which = "8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["process", "time", "rt", "rt-multi-thread", "macros", "io-util", "net", "signal"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+url = "2"
+uuid = { version = "1", features = ["v7"] }
+percent-encoding = "2"
+tower = { version = "0.5", features = ["util"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }

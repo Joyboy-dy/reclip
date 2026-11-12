@@ -1,0 +1,44 @@
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: deploy/core.Dockerfile
+    image: reclip-core:latest
+    ports:
+      - "${RECLIP_PORT:-8899}:8899"
+    volumes:
+      - data:/data
+      # YouTube blocks most server IPs ("Sign in to confirm you're not a bot").
+      # Export cookies.txt from a logged-in browser, put it next to this file,
+      # uncomment the line below and set RECLIP_COOKIES=/run/secrets/cookies.txt.
+      # See deploy/README.md > Cookies YouTube.
+      # - ./cookies.txt:/run/secrets/cookies.txt:ro
+    networks:
+      - core_net
+    restart: unless-stopped
+    # Reaps yt-dlp's orphaned children (PID 1 is reclip-core, which never waits on them).
+    init: true
+    environment:
+      # The container always listens on 8899; RECLIP_PORT only changes the host side.
+      RECLIP_PORT: "8899"
+      RECLIP_HOST: ${RECLIP_HOST:-0.0.0.0}
+      RECLIP_DATA_DIR: /data
+      RECLIP_WEB_DIR: /app/web
+      RECLIP_YTDLP_BIN: ${RECLIP_YTDLP_BIN:-yt-dlp}
+      RECLIP_JS_RUNTIME: ${RECLIP_JS_RUNTIME:-}
+      RECLIP_JOB_TIMEOUT: ${RECLIP_JOB_TIMEOUT:-1800}
+      RECLIP_PLAYLIST_LIMIT: ${RECLIP_PLAYLIST_LIMIT:-50}
+      RECLIP_MAX_FILESIZE: ${RECLIP_MAX_FILESIZE:-2G}
+      RECLIP_MAX_DURATION: ${RECLIP_MAX_DURATION:-10800}
+      RECLIP_COOKIES: ${RECLIP_COOKIES:-}
+      RECLIP_PROXY: ${RECLIP_PROXY:-}
+      RECLIP_TELEGRAM_BOT_USERNAME: ${RECLIP_TELEGRAM_BOT_USERNAME:-}
+      RECLIP_NO_UPDATE: ${RECLIP_NO_UPDATE:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      TZ: ${TZ:-UTC}
+
+networks:
+  core_net:
+
+volumes:
+  data:

@@ -8,3 +8,10 @@ assets/*.mov
 .env.local
 .env.production
 .env.development
+.pytest_cache/
+# YouTube session cookies: never commit them
+cookies*.txt
+/target
+web/node_modules
+web/dist
+data/

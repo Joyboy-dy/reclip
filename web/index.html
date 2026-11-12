@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReClip — Free Media Downloader</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page">
+    <div class="brand">
+      <h1>Re<em>Clip</em></h1>
+      <p>Free media downloader</p>
+    </div>
+
+    <textarea id="urls" placeholder="Paste one or more URLs..." rows="2"></textarea>
+    <p class="hint">Multiple links? Separate with spaces, commas, or newlines.</p>
+
+    <div class="controls">
+      <div class="pill-group">
+        <button class="pill active" data-format="mp4">MP4</button>
+        <button class="pill" data-format="mp3">MP3</button>
+      </div>
+      <button class="fetch-btn" id="goBtn">Fetch</button>
+    </div>
+
+    <div id="cards" class="cards"></div>
+
+    <div class="footer" id="footer">
+      YouTube &middot; TikTok &middot; Instagram &middot; Twitter/X &middot; Reddit &middot; Facebook<br>
+      Vimeo &middot; Twitch &middot; Dailymotion &middot; SoundCloud &middot; Loom &middot; Streamable<br>
+      Pinterest &middot; Tumblr &middot; Threads &middot; LinkedIn &middot; 1000+ more
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
