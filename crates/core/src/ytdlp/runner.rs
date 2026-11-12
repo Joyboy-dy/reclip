@@ -94,7 +94,7 @@ fn failure(cfg: &Config, out: &Captured) -> ApiError {
 }
 
 pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
-    let args = probe_args(url, cfg.playlist_limit);
+    let args = probe_args(cfg, url);
     let never = CancellationToken::new();
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
     if !out.status.success() {

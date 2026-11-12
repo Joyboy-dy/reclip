@@ -191,9 +191,25 @@ fn thumbnail_args() {
 #[test]
 fn x_probe_lists_every_video() {
     assert_eq!(
-        probe_args("https://x.com/u/status/1", 50),
+        probe_args(&cfg(), "https://x.com/u/status/1"),
         ["-j", "--", "https://x.com/u/status/1"]
     );
+}
+
+#[test]
+fn probes_keep_site_fixes() {
+    let ig = "https://www.instagram.com/reel/a/";
+    assert!(has(&probe_args(&cfg(), ig), ["--impersonate", "chrome"]));
+    let bili = "https://www.bilibili.com/video/BV1";
+    assert!(has(
+        &probe_args(&cfg(), bili),
+        ["--add-headers", "Referer:https://www.bilibili.com/"]
+    ));
+    let yt = probe_args(&cfg(), "https://youtube.com/watch?v=a");
+    assert!(!yt.contains(&"--impersonate".into()));
+    // The URL stays last, after "--".
+    let a = probe_args(&cfg(), ig);
+    assert_eq!(a[a.len() - 2..], ["--".to_string(), ig.to_string()]);
 }
 
 #[test]

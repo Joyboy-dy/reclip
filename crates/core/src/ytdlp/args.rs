@@ -75,21 +75,26 @@ pub fn is_playlist_only(url: &str) -> bool {
     !is_x_post(url) && has_list && !has_video
 }
 
-pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
-    if is_x_post(url) {
+/// Probe arguments, with the same per-site fixes as downloads and transcripts
+/// (impersonation, Bilibili headers): a probe the site refuses blocks the
+/// download that follows it.
+pub fn probe_args(cfg: &Config, url: &str) -> Vec<String> {
+    let mut a: Vec<String> = if is_x_post(url) {
         // No --no-playlist: a multi-video post then prints one JSON per video.
-        ["-j", "--", url].map(String::from).to_vec()
+        vec!["-j".into()]
     } else if url.contains("list=") {
-        ["--flat-playlist", "-J", "--playlist-end"]
-            .map(String::from)
-            .into_iter()
-            .chain([playlist_limit.to_string(), "--".into(), url.to_string()])
-            .collect()
+        vec![
+            "--flat-playlist".into(),
+            "-J".into(),
+            "--playlist-end".into(),
+            cfg.playlist_limit.to_string(),
+        ]
     } else {
-        ["--no-playlist", "-j", "--", url]
-            .map(String::from)
-            .to_vec()
-    }
+        vec!["--no-playlist".into(), "-j".into()]
+    };
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
 }
 
 /// Pass 1 of a transcript: print the video's language and its subtitle and
@@ -210,14 +215,14 @@ mod tests {
     #[test]
     fn single_video_probe() {
         assert_eq!(
-            probe_args("https://youtube.com/watch?v=a", 50),
+            probe_args(&cfg(), "https://youtube.com/watch?v=a"),
             ["--no-playlist", "-j", "--", "https://youtube.com/watch?v=a"]
         );
     }
     #[test]
     fn playlist_urls_are_capped() {
         assert_eq!(
-            probe_args("https://youtube.com/watch?v=a&list=RDx", 50),
+            probe_args(&cfg(), "https://youtube.com/watch?v=a&list=RDx"),
             [
                 "--flat-playlist",
                 "-J",

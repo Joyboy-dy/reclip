@@ -64,7 +64,9 @@ async fn mp4_gets_faststart_and_strip() {
     assert_eq!(std::fs::read_to_string(&p).unwrap(), "fake media");
     let argv = argv_record(dir.path()).expect("ffmpeg ran");
     assert!(
-        argv.contains("-map_metadata\n-1\n-movflags\n+faststart"),
+        argv.contains(
+            "-map_metadata\n-1\n-map_metadata:s\n-1\n-map_chapters\n-1\n-movflags\n+faststart"
+        ),
         "{argv}"
     );
     assert!(!dir.path().join("media.finalize.mp4").exists());
