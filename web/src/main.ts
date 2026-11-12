@@ -3,6 +3,7 @@ import type { Job } from "./api/types.gen";
 import { errorText } from "./errors";
 import { cappedFollower } from "./live-slots";
 import { followJob, pollFollow } from "./progress";
+import { rateLimitWait } from "./retry";
 import { type Card, applyJob, cardFromJob, expandPlaylists, isTerminal, jobRequest } from "./state";
 import { type CardActions, removeCardEl, renderCard, renderDownloadAll } from "./ui/card";
 import { renderTelegramLink } from "./ui/footer";
@@ -73,16 +74,32 @@ async function dlCard(key: string): Promise<void> {
     stops.delete(key);
     await deleteJob(previous).catch(() => {});
   }
-  try {
-    const job = await createJob(jobRequest(c, getFormat()));
-    if (!find(key)) return;
-    applyJob(c, job);
-    draw(c);
-    track(c, job.id);
-  } catch (err) {
-    c.status = "error";
-    c.error = errorText(err);
-    draw(c);
+  // A rate-limited creation waits and retries a few times; a card removed
+  // meanwhile (no longer in `cards`) stops the loop.
+  for (let retries = 0; ; retries++) {
+    try {
+      const job = await createJob(jobRequest(c, getFormat()));
+      if (find(key) !== c) return;
+      applyJob(c, job);
+      draw(c);
+      track(c, job.id);
+      return;
+    } catch (err) {
+      if (find(key) !== c) return;
+      const wait = rateLimitWait(err, retries);
+      if (wait === undefined) {
+        c.status = "error";
+        c.error = errorText(err);
+        draw(c);
+        return;
+      }
+      c.waiting = wait;
+      draw(c);
+      await new Promise((done) => setTimeout(done, wait * 1000));
+      if (find(key) !== c) return;
+      c.waiting = undefined;
+      draw(c);
+    }
   }
 }
 

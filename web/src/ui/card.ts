@@ -53,7 +53,9 @@ function actions(c: Card, key: string, format: MediaFormat): string {
       return c.jobId
         ? `<div class="card-progress">${progressBarHtml({ progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState })}</div>
           <button class="card-dl-btn ghost" data-act="cancel" data-key="${esc(key)}">Cancel</button>${c.error ? `<span class="card-status error">${esc(c.error)}</span>` : ""}`
-        : '<span class="card-status downloading"><span class="spin"></span> Downloading...</span>';
+        : c.waiting !== undefined
+          ? `<span class="card-status downloading">Waiting ${c.waiting} s (rate limit)</span>`
+          : '<span class="card-status downloading"><span class="spin"></span> Downloading...</span>';
     case "done":
       return `<button class="card-dl-btn done" data-act="save" data-key="${esc(key)}">Save</button>
           <span class="card-status done">${esc(c.filename ?? "")}</span>${removeBtn(c, key)}`;
