@@ -150,6 +150,9 @@ pub struct Job {
     pub strip_metadata: bool,
     /// Whether `POST /jobs/{id}/resume` can continue this job.
     pub resumable: bool,
+    /// 1-based item of a multi-video post.
+    #[serde(default)]
+    pub playlist_item: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]

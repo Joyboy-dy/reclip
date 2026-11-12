@@ -27,7 +27,7 @@ mod time;
 
 const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, filename, size, \
                        error_code, error_message, created_at, expires_at, clip_start, clip_end, \
-                       strip_metadata";
+                       strip_metadata, playlist_item";
 
 use time::finished_and_expiry;
 pub use time::{now, now_minus, now_plus};
@@ -110,7 +110,14 @@ fn row_to_job(row: &SqliteRow) -> Result<Job> {
         expires_at,
         clip,
         strip_metadata: row.try_get("strip_metadata")?,
+        playlist_item: playlist_item(row)?,
     })
+}
+
+/// The `playlist_item` column (1-based), if set.
+fn playlist_item(row: &SqliteRow) -> Result<Option<u32>> {
+    let n: Option<i64> = row.try_get("playlist_item")?;
+    Ok(n.and_then(|n| u32::try_from(n).ok()))
 }
 
 impl Store {
@@ -154,17 +161,6 @@ impl Store {
     /// Insert a job for `owner` (e.g. `web:<hex>`; `""` for legacy rows),
     /// counted against `quota_key` (`""` for none).
     pub async fn insert(&self, job: &Job, owner: &str, quota_key: &str) -> Result<()> {
-        self.insert_item(job, owner, quota_key, None).await
-    }
-
-    /// [`Store::insert`] for one `playlist_item` (1-based) of a multi-video post.
-    pub async fn insert_item(
-        &self,
-        job: &Job,
-        owner: &str,
-        quota_key: &str,
-        playlist_item: Option<u32>,
-    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO jobs (id, url, format, format_id, title, thumbnail, state, \
              filename, size, error_code, error_message, created_at, expires_at, owner, quota_key, \
@@ -189,20 +185,10 @@ impl Store {
         .bind(job.clip.map(|c| c.start))
         .bind(job.clip.and_then(|c| c.end))
         .bind(job.strip_metadata)
-        .bind(playlist_item.map(i64::from))
+        .bind(job.playlist_item.map(i64::from))
         .execute(&self.0)
         .await?;
         Ok(())
-    }
-
-    /// The 1-based playlist item a job downloads, if any.
-    pub async fn playlist_item(&self, id: &str) -> Result<Option<u32>> {
-        let n: Option<Option<i64>> =
-            sqlx::query_scalar("SELECT playlist_item FROM jobs WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.0)
-                .await?;
-        Ok(n.flatten().and_then(|n| u32::try_from(n).ok()))
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Job>> {

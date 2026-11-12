@@ -68,7 +68,11 @@ expires_at: string | null, clip: Clip | null, strip_metadata: boolean,
 /**
  * Whether `POST /jobs/{id}/resume` can continue this job.
  */
-resumable: boolean, };
+resumable: boolean, 
+/**
+ * 1-based item of a multi-video post.
+ */
+playlist_item: number | null, };
 
 export type JobList = { jobs: Array<Job>, };
 
@@ -144,7 +148,11 @@ created_at: string,
 /**
  * RFC 3339 timestamp of the file expiry.
  */
-expires_at: string | null, };
+expires_at: string | null, 
+/**
+ * 1-based item of a multi-video post.
+ */
+playlist_item: number | null, };
 
 export type HistoryList = { entries: Array<HistoryEntry>, };
 

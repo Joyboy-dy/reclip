@@ -5,7 +5,7 @@ import { applyJob, canRetry, cardFromJob, jobRequest } from "../src/state";
 const job = (over: Partial<Job>): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: "137", title: "T", thumbnail: "https://t/i.jpg",
   state: "queued", filename: null, size: null, error: null, progress: null, speed: null, eta: null,
-  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false, ...over,
+  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null, ...over,
 });
 
 test("queued job becomes a downloading card", () => {
@@ -75,4 +75,10 @@ test("a stopped job keeps the last progress seen and its resume flag", () => {
   const c = cardFromJob(job({ state: "downloading", progress: 63 }));
   applyJob(c, job({ state: "cancelled", progress: null, resumable: true }));
   expect(c).toMatchObject({ status: "error", progress: 63, resumable: true, jobState: "cancelled" });
+});
+
+test("a restored item of a multi-video post is retried with its playlist_item", () => {
+  const c = cardFromJob(job({ state: "failed", error: { code: "interrupted", message: "m" }, playlist_item: 2 }));
+  expect(c.playlistItem).toBe(2);
+  expect(jobRequest(c, { format: "mp4", strip: false })).toMatchObject({ playlist_item: 2 });
 });

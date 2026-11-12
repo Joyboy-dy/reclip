@@ -6,7 +6,7 @@ import type { Job } from "../src/api/types.gen";
 const job = (state: Job["state"]): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: null, title: null, thumbnail: null,
   state, filename: null, size: null, error: null, progress: null, speed: null, eta: null,
-  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false,
+  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null,
 });
 
 /** A virtual clock: `sleep` advances it at once and records each wait. */

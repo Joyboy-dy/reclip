@@ -144,9 +144,10 @@ impl JobManager {
             clip: req.clip,
             strip_metadata: req.strip_metadata,
             resumable: false,
+            playlist_item: req.playlist_item,
         };
         self.store()
-            .insert_item(&job, owner, quota_key, req.playlist_item)
+            .insert(&job, owner, quota_key)
             .await
             .map_err(internal)?;
         self.enqueue(job.clone(), owner);

@@ -288,5 +288,16 @@ async fn rejects_bad_clip_and_playlist_item() {
     // Valid bounds are accepted: a clip to the end, the first item.
     let ok =
         json!({"url": "https://ok", "format": "mp4", "clip": {"start": 0.0}, "playlist_item": 1});
-    assert_eq!(s.post("/api/v1/jobs", ok).await.status(), 202);
+    let r = s.post("/api/v1/jobs", ok).await;
+    assert_eq!(r.status(), 202);
+    let job: Value = r.json().await.unwrap();
+    assert_eq!(job["playlist_item"], 1);
+    let id = job["id"].as_str().unwrap();
+    let stored: Value = s
+        .get(&format!("/api/v1/jobs/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(stored["playlist_item"], 1);
 }

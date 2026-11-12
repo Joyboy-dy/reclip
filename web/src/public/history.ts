@@ -40,7 +40,7 @@ export async function clean(req: HistoryClean): Promise<void> {
   await loadHistory();
 }
 
-/** Start a new download of an entry whose file expired, with its format and quality. */
+/** Start a new download of an entry whose file expired, with its format, quality and post item. */
 export function downloadAgain(e: HistoryEntry): void {
   addAndDownload({
     key: newKey(),
@@ -49,5 +49,6 @@ export function downloadAgain(e: HistoryEntry): void {
     title: e.title ?? undefined,
     format: e.format,
     selectedFormat: e.format_id ?? undefined,
+    playlistItem: e.playlist_item ?? undefined,
   });
 }

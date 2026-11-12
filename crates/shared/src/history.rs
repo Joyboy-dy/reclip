@@ -22,6 +22,9 @@ pub struct HistoryEntry {
     pub created_at: String,
     /// RFC 3339 timestamp of the file expiry.
     pub expires_at: Option<String>,
+    /// 1-based item of a multi-video post.
+    #[serde(default)]
+    pub playlist_item: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]

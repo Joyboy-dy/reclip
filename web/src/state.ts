@@ -79,7 +79,13 @@ export function applyJob(c: Card, job: Job): void {
 
 /** Build a card from a job alone (page refresh). */
 export function cardFromJob(job: Job): Card {
-  const c: Card = { key: job.id, url: job.url, status: "downloading", selectedFormat: job.format_id ?? undefined };
+  const c: Card = {
+    key: job.id,
+    url: job.url,
+    status: "downloading",
+    selectedFormat: job.format_id ?? undefined,
+    playlistItem: job.playlist_item ?? undefined,
+  };
   applyJob(c, job);
   return c;
 }

@@ -55,7 +55,7 @@ test("history notes, desktop and phone", () => {
   const now = new Date(2026, 10, 12, 12);
   const e = (over: Partial<HistoryEntry>): HistoryEntry => ({
     id: "h", url: "https://x", title: "T", format: "flac", format_id: null, size: 212 * MB, has_thumbnail: false,
-    file_available: false, created_at: new Date(2026, 10, 9, 12).toISOString(), expires_at: null, ...over,
+    file_available: false, created_at: new Date(2026, 10, 9, 12).toISOString(), expires_at: null, playlist_item: null, ...over,
   });
   expect(historyNote(e({}), now)).toBe("FLAC · 212 MB · 3 days ago · file expired");
   expect(phoneHistoryNote(e({}), now)).toBe("FLAC · 3 days ago · expired");

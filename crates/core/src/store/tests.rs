@@ -37,6 +37,7 @@ fn sample(id: &str) -> Job {
         }),
         strip_metadata: true,
         resumable: false,
+        playlist_item: None,
     }
 }
 
@@ -49,17 +50,13 @@ async fn new_columns_round_trip() {
         end: None,
     });
     open_ended.strip_metadata = false;
-    store
-        .insert_item(&open_ended, "", "", Some(2))
-        .await
-        .unwrap();
+    open_ended.playlist_item = Some(2);
+    store.insert(&open_ended, "", "").await.unwrap();
     assert_eq!(store.get("j2").await.unwrap(), Some(open_ended));
-    assert_eq!(store.playlist_item("j2").await.unwrap(), Some(2));
     let mut plain = sample("j3");
     plain.clip = None;
     store.insert(&plain, "", "").await.unwrap();
     assert_eq!(store.get("j3").await.unwrap(), Some(plain));
-    assert_eq!(store.playlist_item("j3").await.unwrap(), None);
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ import { formatProgress, progressWidth } from "../src/public/format";
 const job = (state: Job["state"], progress: number | null = null): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: null, title: null, thumbnail: null,
   state, filename: null, size: null, error: null, progress, speed: null, eta: null,
-  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false,
+  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null,
 });
 
 class FakeES {

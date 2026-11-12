@@ -34,6 +34,7 @@ fn job(id: &str, state: JobState, code: Option<ErrorCode>) -> Job {
         clip: None,
         strip_metadata: false,
         resumable: false,
+        playlist_item: None,
     }
 }
 
@@ -222,6 +223,17 @@ async fn expired_failed_and_cancelled_jobs_stay_out_of_history() {
         .set_finished("done", JobState::Done, Some("a.mp4"), Some(1), None, ttl)
         .await
         .unwrap();
+    store
+        .insert(
+            &Job {
+                playlist_item: Some(3),
+                ..job("item", JobState::Done, None)
+            },
+            OWNER,
+            "",
+        )
+        .await
+        .unwrap();
     finish(&store, "cancelled", JobState::Cancelled, None).await;
     finish(
         &store,
@@ -234,6 +246,9 @@ async fn expired_failed_and_cancelled_jobs_stay_out_of_history() {
         assert!(store.expire_now(id).await.unwrap(), "{id}");
     }
     let rows = store.history(OWNER, &since).await.unwrap();
-    let ids: Vec<&str> = rows.iter().map(|(e, _)| e.id.as_str()).collect();
-    assert_eq!(ids, ["done"]);
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(e, _)| (e.id.as_str(), e.playlist_item))
+        .collect();
+    assert_eq!(items, [("item", Some(3)), ("done", None)]);
 }

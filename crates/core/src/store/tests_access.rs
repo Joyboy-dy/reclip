@@ -24,6 +24,7 @@ fn job(id: &str, state: JobState) -> Job {
         clip: None,
         strip_metadata: false,
         resumable: false,
+        playlist_item: None,
     }
 }
 

@@ -44,6 +44,7 @@ fn job(id: &str, state: JobState, format_id: Option<&str>) -> Job {
         clip: None,
         strip_metadata: false,
         resumable: false,
+        playlist_item: None,
         expires_at: Some(reclip_core::store::now_plus(Duration::from_secs(3600))),
     }
 }

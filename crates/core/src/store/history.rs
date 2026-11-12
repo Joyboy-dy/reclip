@@ -8,7 +8,7 @@ use anyhow::Result;
 use reclip_shared::{HistoryEntry, JobState};
 use sqlx::Row;
 
-use super::{Store, from_wire, now};
+use super::{Store, from_wire, now, playlist_item};
 
 /// Most entries the history returns.
 const HISTORY_LIMIT: i64 = 500;
@@ -31,7 +31,7 @@ impl Store {
     ) -> Result<Vec<(HistoryEntry, Option<PathBuf>)>> {
         let rows = sqlx::query(&format!(
             "SELECT id, url, title, format, format_id, size, state, created_at, expires_at, \
-             file_path, thumb_path FROM jobs WHERE {VISIBLE} \
+             file_path, thumb_path, playlist_item FROM jobs WHERE {VISIBLE} \
              ORDER BY created_at DESC, id DESC LIMIT ?"
         ))
         .bind(owner)
@@ -55,6 +55,7 @@ impl Store {
                     file_available: state == JobState::Done && path.is_some(),
                     created_at: row.try_get("created_at")?,
                     expires_at: row.try_get("expires_at")?,
+                    playlist_item: playlist_item(row)?,
                 };
                 Ok((entry, path.map(PathBuf::from)))
             })

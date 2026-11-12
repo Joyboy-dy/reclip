@@ -123,6 +123,7 @@ mod tests {
             clip: None,
             strip_metadata: false,
             resumable: false,
+            playlist_item: None,
         }
     }
 

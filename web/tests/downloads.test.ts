@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { Job, ProbeResponse } from "../src/api/types.gen";
 import { download, fetchLinks, resume } from "../src/public/downloads";
-import { clean, loadHistory, removeEntry } from "../src/public/history";
+import { clean, downloadAgain, loadHistory, removeEntry } from "../src/public/history";
 import { findCard, initialState, setOptions, store } from "../src/public/store";
 
 type Call = { path: string; method: string; body?: unknown };
@@ -15,7 +15,7 @@ const pending = () => json({ code: "internal", message: "Not implemented yet" },
 const job = (over: Partial<Job> = {}): Job => ({
   id: "j1", url: "https://y/v", format: "mp4", format_id: null, title: null, thumbnail: null, state: "queued",
   filename: null, size: null, error: null, progress: null, speed: null, eta: null, created_at: "2026-01-01T00:00:00Z",
-  expires_at: null, clip: null, strip_metadata: false, resumable: false, ...over,
+  expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null, ...over,
 });
 const video = (title: string): ProbeResponse => ({
   kind: "video", title, thumbnail: null, duration: 10, uploader: null,
@@ -110,7 +110,7 @@ test("history: a failed load and a failed action are reported, the list is kept"
   expect(store.get().history).toEqual({ status: "error", error: "Not implemented yet" });
 
   const entry = { id: "h1", url: "https://y/v", title: "T", format: "mp4" as const, format_id: null, size: 1, has_thumbnail: false,
-    file_available: true, created_at: "2026-01-01T00:00:00Z", expires_at: null };
+    file_available: true, created_at: "2026-01-01T00:00:00Z", expires_at: null, playlist_item: null };
   reply = () => json({ entries: [entry] });
   await loadHistory();
   expect(store.get().history).toEqual({ status: "ready", entries: [entry] });
@@ -123,4 +123,13 @@ test("history: a failed load and a failed action are reported, the list is kept"
   await clean({ mode: "older_than", days: 7 });
   expect(calls.find((c) => c.path === "/api/v1/history/clean")?.body).toEqual({ mode: "older_than", days: 7 });
   expect(store.get().history).toEqual({ status: "ready", entries: [] });
+});
+
+test("download again sends the entry's format, quality and playlist_item", async () => {
+  reply = () => json(job());
+  downloadAgain({ id: "h1", url: "https://x.com/a/status/1", title: "T", format: "mkv", format_id: "136", size: 1,
+    has_thumbnail: false, file_available: false, created_at: "2026-01-01T00:00:00Z", expires_at: null, playlist_item: 2 });
+  await new Promise((r) => setTimeout(r, 0));
+  const create = calls.find((c) => c.path === "/api/v1/jobs" && c.method === "POST");
+  expect(create?.body).toMatchObject({ url: "https://x.com/a/status/1", format: "mkv", format_id: "136", playlist_item: 2 });
 });
