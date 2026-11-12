@@ -3,7 +3,7 @@
 mod common;
 
 use common::TestServer;
-use reclip_core::ytdlp::subs::vtt_to_text;
+use reclip_core::ytdlp::subs::{MAX_TEXT_BYTES, sweep_leftovers, vtt_to_text};
 use reclip_shared::Scope;
 use serde_json::{Value, json};
 
@@ -72,13 +72,6 @@ async fn requested_language_is_passed_on() {
         (b["language"].as_str(), b["automatic"].as_bool()),
         (Some("de"), Some(false))
     );
-    let bad = s
-        .post(
-            TRANSCRIPT,
-            json!({"url": "https://subs-manual.example/v", "language": "en.*;rm"}),
-        )
-        .await;
-    assert_eq!(bad.status(), 400);
 }
 
 #[tokio::test]
@@ -131,4 +124,103 @@ async fn private_targets_are_refused() {
     let s = TestServer::start(|_| {}).await;
     let r = s.post(TRANSCRIPT, body("http://[::1]:8080/")).await;
     assert_eq!(r.status(), 403);
+}
+
+async fn fetch(s: &TestServer, url: &str, language: Option<&str>) -> Value {
+    let r = s
+        .post(TRANSCRIPT, json!({"url": url, "language": language}))
+        .await;
+    assert_eq!(r.status(), 200, "{url}");
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn bad_language_codes_are_refused() {
+    let s = TestServer::start(|_| {}).await;
+    for bad in ["en.*;rm", "all", "-en"] {
+        let r = s
+            .post(
+                TRANSCRIPT,
+                json!({"url": "https://subs-manual.example/v", "language": bad}),
+            )
+            .await;
+        assert_eq!(r.status(), 400, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn manual_only_non_english_subtitles_are_found_without_a_language() {
+    let s = TestServer::start(|_| {}).await;
+    let b = fetch(&s, "https://subs-fr.example/v", None).await;
+    assert_eq!(b["language"], "fr");
+    assert_eq!(b["automatic"], false);
+    assert_eq!(b["text"], "Bonjour");
+    let b = fetch(&s, "https://subs-enus.example/v", None).await;
+    assert_eq!(b["language"], "en-US");
+}
+
+#[tokio::test]
+async fn a_requested_language_matches_its_regional_variant() {
+    let s = TestServer::start(|_| {}).await;
+    let b = fetch(&s, "https://subs-frfr.example/v", Some("fr")).await;
+    assert_eq!(b["language"], "fr-FR");
+    let r = s
+        .post(
+            TRANSCRIPT,
+            json!({"url": "https://subs-frfr.example/v", "language": "de"}),
+        )
+        .await;
+    assert_eq!(r.status(), 422);
+}
+
+#[tokio::test]
+async fn a_listed_track_that_is_not_written_is_a_retryable_failure() {
+    let s = TestServer::start(|_| {}).await;
+    let r = s
+        .post(TRANSCRIPT, body("https://subs-lost.example/v"))
+        .await;
+    assert_eq!(r.status(), 422);
+    let b: Value = r.json().await.unwrap();
+    assert_eq!(b["code"], "unavailable");
+    assert_eq!(
+        b["message"],
+        "Subtitles could not be downloaded, try again later"
+    );
+    assert_eq!(std::fs::read_dir(s.data.join("tmp")).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn the_temp_dir_is_empty_after_success() {
+    let s = TestServer::start(|_| {}).await;
+    fetch(&s, "https://subs-manual.example/v", None).await;
+    assert_eq!(std::fs::read_dir(s.data.join("tmp")).unwrap().count(), 0);
+}
+
+#[test]
+fn parser_handles_multi_line_cues_crlf_and_bom() {
+    let vtt =
+        "\u{feff}WEBVTT\r\n\r\nid\r\n00:00:00.000 --> 00:00:01.000\r\nline one\r\nline two\r\n\r\n";
+    assert_eq!(vtt_to_text(vtt), "line one\nline two");
+}
+
+#[test]
+fn text_is_cut_at_one_mebibyte() {
+    let mut vtt = String::from("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n");
+    for i in 0..60_000 {
+        vtt.push_str(&format!("a fairly long caption line number {i}\n"));
+    }
+    let text = vtt_to_text(&vtt);
+    assert!(vtt.len() > MAX_TEXT_BYTES);
+    assert!(text.len() <= MAX_TEXT_BYTES && text.len() > MAX_TEXT_BYTES - 100);
+}
+
+#[test]
+fn leftover_temp_dirs_are_swept() {
+    let data = tempfile::tempdir().unwrap();
+    let tmp = data.path().join("tmp");
+    std::fs::create_dir_all(tmp.join("subs-abc")).unwrap();
+    std::fs::write(tmp.join("subs-abc/sub.en.vtt"), "x").unwrap();
+    std::fs::create_dir_all(tmp.join("other")).unwrap();
+    assert_eq!(sweep_leftovers(data.path()), 1);
+    assert!(!tmp.join("subs-abc").exists() && tmp.join("other").exists());
 }

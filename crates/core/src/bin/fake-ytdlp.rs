@@ -75,6 +75,10 @@ fn main() {
         }
         return;
     }
+    if args.iter().any(|a| a.starts_with("reclip-meta:")) {
+        subtitle_meta(&url);
+        return;
+    }
     if flag("--write-subs") {
         subtitles(&args, &url, template.expect("-o template"));
         return;
@@ -193,32 +197,59 @@ second part
 second part
 ";
 
-/// `--write-subs`: writes `<template>.<lang>.vtt` files like yt-dlp and prints
-/// the `subtitles` field. `subs-manual` has uploaded subtitles in the
-/// requested language (English by default), `subs-auto` only automatic
-/// captions, `subs-both` an automatic English and a manual French track; any
-/// other URL has none.
+/// (video language, uploaded tracks, automatic tracks) by URL keyword.
+fn tracks(
+    url: &str,
+) -> (
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+) {
+    match () {
+        () if url.contains("subs-manual") => ("en", &["de", "en"], &[]),
+        () if url.contains("subs-auto") => ("en", &[], &["en", "en-orig", "fr"]),
+        () if url.contains("subs-both") => ("fr", &["fr"], &["en-orig"]),
+        () if url.contains("subs-enus") => ("en", &["en-US"], &[]),
+        () if url.contains("subs-frfr") => ("fr", &["fr-FR"], &[]),
+        () if url.contains("subs-fr") => ("fr", &["fr"], &[]),
+        () if url.contains("subs-lost") => ("en", &["en"], &[]),
+        _ => ("en", &[], &[]),
+    }
+}
+
+/// Pass 1: the `--print` line with the language and the track keys.
+fn subtitle_meta(url: &str) {
+    let (language, manual, auto) = tracks(url);
+    let dict = |keys: &[&str]| -> serde_json::Value {
+        keys.iter()
+            .map(|k| (k.to_string(), serde_json::json!([])))
+            .collect()
+    };
+    let meta = serde_json::json!({
+        "language": language,
+        "subtitles": dict(manual),
+        "automatic_captions": dict(auto),
+    });
+    println!("reclip-meta:{meta}");
+}
+
+/// Pass 2 (`--write-subs`): writes `<template>.<key>.vtt` for the one track
+/// named by `--sub-langs` (regex-escaped), like yt-dlp. `subs-lost` writes
+/// nothing and warns, like a refused subtitle download.
 fn subtitles(args: &[String], url: &str, template: String) {
     let langs = args
         .windows(2)
         .find(|w| w[0] == "--sub-langs")
         .map_or("", |w| w[1].as_str());
-    // The default request is a regex list; a named language is used as is.
-    let named = (!langs.contains('*')).then_some(langs);
-    let write = |lang: &str, vtt: &str| {
-        std::fs::write(format!("{template}.{lang}.vtt"), vtt).unwrap();
-    };
-    let mut manual = serde_json::Map::new();
-    if url.contains("subs-manual") {
-        let lang = named.unwrap_or("en");
-        write(lang, MANUAL_VTT);
-        manual.insert(lang.into(), serde_json::json!([]));
-    } else if url.contains("subs-auto") {
-        write("en-orig", AUTO_VTT);
-    } else if url.contains("subs-both") {
-        write("en-orig", AUTO_VTT);
-        write("fr", MANUAL_VTT);
-        manual.insert("fr".into(), serde_json::json!([]));
+    let key = langs.replace('\\', "");
+    if url.contains("subs-lost") {
+        eprintln!("WARNING: Unable to download video subtitles for '{key}': HTTP Error 429");
+        return;
     }
-    println!("reclip-subs:{}", serde_json::Value::Object(manual));
+    let vtt = if tracks(url).1.contains(&key.as_str()) {
+        MANUAL_VTT
+    } else {
+        AUTO_VTT
+    };
+    std::fs::write(format!("{template}.{key}.vtt"), vtt).unwrap();
 }

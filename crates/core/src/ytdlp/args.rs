@@ -5,7 +5,7 @@ use std::path::Path;
 use tempfile::TempPath;
 
 use super::download_args::{is_x_post, site_args};
-use super::subs::{DEFAULT_LANGS, FILE_STEM, MANUAL_PREFIX};
+use super::subs::{FILE_STEM, META_PREFIX, escape_selector};
 use crate::config::Config;
 
 /// Arguments shared by every yt-dlp call. The cookies copy lives as long as
@@ -82,21 +82,35 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
     }
 }
 
-/// yt-dlp arguments that write `<dir>/sub.<lang>.vtt` for `url` without
-/// downloading the media, and print the uploaded subtitle languages.
-pub fn subs_args(cfg: &Config, url: &str, language: Option<&str>, dir: &Path) -> Vec<String> {
+/// Pass 1 of a transcript: print the video's language and its subtitle and
+/// automatic caption tracks as one JSON line. Nothing is downloaded.
+pub fn meta_args(cfg: &Config, url: &str) -> Vec<String> {
+    let mut a: Vec<String> = ["--skip-download", "--no-playlist", "--print"]
+        .map(String::from)
+        .to_vec();
+    a.push(format!(
+        "{META_PREFIX}%(.{{language,subtitles,automatic_captions}})j"
+    ));
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
+}
+
+/// Pass 2: write `<dir>/sub.<key>.vtt`, exactly that one track, without
+/// downloading the media.
+pub fn subs_args(cfg: &Config, url: &str, key: &str, dir: &Path) -> Vec<String> {
     let mut a: Vec<String> = [
         "--skip-download",
         "--no-playlist",
         "--write-subs",
         "--write-auto-subs",
+        "--sub-format",
+        "vtt",
         "--sub-langs",
     ]
     .map(String::from)
     .to_vec();
-    a.push(language.unwrap_or(DEFAULT_LANGS).into());
-    a.extend(["--sub-format", "vtt", "--no-simulate", "--print"].map(String::from));
-    a.push(format!("{MANUAL_PREFIX}%(subtitles)j"));
+    a.push(escape_selector(key));
     a.extend([
         "-o".into(),
         dir.join(FILE_STEM).to_string_lossy().into_owned(),

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use reclip_shared::{Clip, MediaFormat};
 
-use super::args::{DownloadOptions, download_args, probe_args, subs_args};
+use super::args::{DownloadOptions, download_args, meta_args, probe_args, subs_args};
 use crate::config::Config;
 
 fn cfg() -> Config {
@@ -195,29 +195,22 @@ fn x_probe_lists_every_video() {
 }
 
 #[test]
-fn subtitle_call_downloads_no_media_and_keeps_site_fixes() {
-    let a = subs_args(
-        &cfg(),
-        "https://www.bilibili.com/video/BV1",
-        Some("fr"),
-        Path::new("/t"),
-    );
+fn subtitle_calls_download_no_media_and_keep_site_fixes() {
+    let url = "https://www.bilibili.com/video/BV1";
+    let a = subs_args(&cfg(), url, "fr-FR", Path::new("/t"));
     assert!(a.contains(&"--skip-download".to_string()));
-    assert!(has(&a, ["--sub-langs", "fr"]));
+    assert!(has(&a, ["--sub-langs", r"fr\-FR"]));
     assert!(has(&a, ["--sub-format", "vtt"]));
     assert!(has(
         &a,
         ["--add-headers", "Referer:https://www.bilibili.com/"]
     ));
-    assert_eq!(
-        a[a.len() - 2..],
-        ["--", "https://www.bilibili.com/video/BV1"]
-    );
-    let d = subs_args(
-        &cfg(),
-        "https://youtube.com/watch?v=a",
-        None,
-        Path::new("/t"),
-    );
-    assert!(has(&d, ["--sub-langs", ".*-orig,en"]));
+    assert_eq!(a[a.len() - 2..], ["--", url]);
+    let m = meta_args(&cfg(), url);
+    assert!(m.contains(&"--skip-download".to_string()));
+    assert!(m.iter().any(|x| x.starts_with("reclip-meta:")));
+    assert!(has(
+        &m,
+        ["--add-headers", "Origin:https://www.bilibili.com"]
+    ));
 }

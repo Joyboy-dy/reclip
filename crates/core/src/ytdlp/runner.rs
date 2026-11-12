@@ -10,8 +10,8 @@ use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::args::{
-    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
-    session_args, subs_args,
+    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, meta_args,
+    probe_args, session_args, subs_args,
 };
 use super::download_args::is_x_post;
 use super::errors::classify;
@@ -19,7 +19,7 @@ use super::finalize::finalize;
 use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
-use super::subs::{find_transcript, manual_languages};
+use super::subs::{TMP_PREFIX, choose, parse_tracks, read_track};
 use crate::config::Config;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -115,26 +115,55 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
 
 /// Subtitles of `url` as plain text, fetched without the media into a
 /// temporary directory under the data dir (always removed). `language` must
-/// already be validated; `None` means the original language, then English.
+/// already be validated. Pass 1 reads the video's language and tracks and
+/// picks one in Rust; pass 2 fetches exactly that track.
 pub async fn transcript(
     cfg: &Config,
     url: &str,
     language: Option<&str>,
 ) -> Result<Transcript, ApiError> {
+    let never = CancellationToken::new();
+    let meta = run(
+        cfg,
+        &meta_args(cfg, url),
+        PROBE_TIMEOUT,
+        usize::MAX,
+        |_| {},
+        &never,
+    )
+    .await?;
+    if !meta.status.success() {
+        return Err(failure(cfg, &meta));
+    }
+    let none = || err(ErrorCode::Unavailable, "No subtitles available");
+    let track = choose(&parse_tracks(&meta.stdout), language).ok_or_else(none)?;
     let root = cfg.data_dir.join("tmp");
     std::fs::create_dir_all(&root).map_err(io_err)?;
     let dir = tempfile::Builder::new()
-        .prefix("subs-")
+        .prefix(TMP_PREFIX)
         .tempdir_in(&root)
         .map_err(io_err)?;
-    let args = subs_args(cfg, url, language, dir.path());
-    let never = CancellationToken::new();
+    let args = subs_args(cfg, url, &track.key, dir.path());
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    find_transcript(dir.path(), &manual_languages(&out.stdout))
-        .ok_or_else(|| err(ErrorCode::Unavailable, "No subtitles available"))
+    let Some(text) = read_track(dir.path(), &track.key) else {
+        // E.g. an HTTP 429 on the subtitle file: yt-dlp warns and exits 0.
+        tracing::warn!(stderr = %out.stderr.trim(), "subtitle track listed but not written");
+        return Err(err(
+            ErrorCode::Unavailable,
+            "Subtitles could not be downloaded, try again later",
+        ));
+    };
+    if text.is_empty() {
+        return Err(none());
+    }
+    Ok(Transcript {
+        language: track.key,
+        automatic: track.automatic,
+        text,
+    })
 }
 
 /// Download `url` into `job_dir`, reporting progress through `on_progress`.
