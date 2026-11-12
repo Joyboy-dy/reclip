@@ -203,7 +203,7 @@ Le bot est un second conteneur (`reclip-bot`, profil compose `telegram`). Il n'a
 1. Dans Telegram, ouvrez [@BotFather](https://t.me/BotFather) et envoyez `/newbot`.
 2. Nom affiché : `DL Manager`. Choisissez un nom d'utilisateur qui finit par `bot`.
 3. Copiez le jeton que BotFather renvoie. Ne le mettez jamais dans git.
-4. Pour le lien dans le pied de page du site, mettez le nom d'utilisateur (sans le `@`) dans `RECLIP_TELEGRAM_BOT_USERNAME`.
+4. Le pied de page du site renvoie par défaut vers `@socialvideodl_bot`. Pour un autre bot, mettez son nom d'utilisateur (sans le `@`) dans `RECLIP_TELEGRAM_BOT_USERNAME` ; vide, le lien disparaît.
 
 ### Mode simple (jeton seul)
 
