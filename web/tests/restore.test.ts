@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Job } from "../src/api/types.gen";
-import { cardFromJob } from "../src/state";
+import { canRetry, cardFromJob, jobRequest } from "../src/state";
 
 const job = (over: Partial<Job>): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: "137", title: "T", thumbnail: "https://t/i.jpg",
@@ -33,4 +33,17 @@ test("cancelled job reads as cancelled", () => {
   const c = cardFromJob(job({ state: "cancelled" }));
   expect(c.status).toBe("error");
   expect(c.error).toBe("Download cancelled");
+});
+
+test("restored failed job can be retried with its own format and quality", () => {
+  const c = cardFromJob(job({ state: "failed", error: { code: "interrupted", message: "m" } }));
+  expect(canRetry(c)).toBe(true);
+  expect(jobRequest(c, "mp3")).toEqual({ url: "https://x", format: "mp4", format_id: "137", title: "T", thumbnail: "https://t/i.jpg" });
+});
+
+test("probed card follows the format toggle", () => {
+  const c = { key: "k", url: "https://y", status: "error" as const, selectedFormat: "22",
+    info: { title: "P", thumbnail: null, duration: null, uploader: null, formats: [] } };
+  expect(jobRequest(c, "mp3")).toEqual({ url: "https://y", format: "mp3", format_id: undefined, title: "P", thumbnail: undefined });
+  expect(canRetry({ key: "n", url: "https://z", status: "error" })).toBe(false);
 });

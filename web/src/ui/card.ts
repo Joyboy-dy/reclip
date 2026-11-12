@@ -1,5 +1,5 @@
 import type { MediaFormat } from "../api/types.gen";
-import type { Card } from "../state";
+import { type Card, canRetry } from "../state";
 import { esc, fmtDur } from "../urls";
 import { progressBarHtml, updateProgressBar } from "./progress-bar";
 
@@ -58,7 +58,7 @@ function actions(c: Card, key: string, format: MediaFormat): string {
       return `<button class="card-dl-btn done" data-act="save" data-key="${esc(key)}">Save</button>
           <span class="card-status done">${esc(c.filename ?? "")}</span>${removeBtn(c, key)}`;
     case "error":
-      return `${c.info ? `<button class="card-dl-btn" data-act="download" data-key="${esc(key)}">Retry</button>` : ""}
+      return `${canRetry(c) ? `<button class="card-dl-btn" data-act="download" data-key="${esc(key)}">Retry</button>` : ""}
           <span class="card-status error">${esc(c.error ?? "Download failed")}</span>${removeBtn(c, key)}`;
     default:
       return "";
