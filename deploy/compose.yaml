@@ -8,6 +8,8 @@ services:
       - "${RECLIP_PORT:-8899}:8899"
     volumes:
       - data:/data
+      # Shared with the bot (read-only there): the core writes the bot API key here.
+      - secrets:/run/reclip
       # YouTube blocks most server IPs ("Sign in to confirm you're not a bot").
       # Export cookies.txt from a logged-in browser, put it next to this file,
       # uncomment the line below and set RECLIP_COOKIES=/run/secrets/cookies.txt.
@@ -59,12 +61,63 @@ services:
       RECLIP_LIMIT_TG_PROBES_PER_MIN: ${RECLIP_LIMIT_TG_PROBES_PER_MIN:-30}
       RECLIP_LIMIT_TG_JOBS_PER_HOUR: ${RECLIP_LIMIT_TG_JOBS_PER_HOUR:-40}
       RECLIP_LIMIT_TG_ACTIVE: ${RECLIP_LIMIT_TG_ACTIVE:-10}
+      # Empty = no bot key is created. The bot service reads the same file.
+      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE:-/run/reclip/bot.key}
       RECLIP_NO_UPDATE: ${RECLIP_NO_UPDATE:-}
       RUST_LOG: ${RUST_LOG:-info}
       TZ: ${TZ:-UTC}
 
+  # Telegram bot. Start it with COMPOSE_PROFILES=telegram (or telegram,telegram-local).
+  # It only calls the core API; it never sees the database.
+  bot:
+    profiles: [telegram]
+    build:
+      context: ..
+      dockerfile: deploy/bot.Dockerfile
+    image: reclip-bot:latest
+    depends_on:
+      core:
+        condition: service_healthy
+    networks:
+      - core_net
+      - tg_net
+    volumes:
+      - secrets:/run/reclip:ro
+      - bot-data:/var/lib/reclip-bot
+    restart: unless-stopped
+    init: true
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
+      RECLIP_CORE_URL: ${RECLIP_CORE_URL:-http://core:8899}
+      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE:-/run/reclip/bot.key}
+      RECLIP_BOT_STATE: ${RECLIP_BOT_STATE:-/var/lib/reclip-bot/state.json}
+      RECLIP_BOT_MAX_UPLOAD: ${RECLIP_BOT_MAX_UPLOAD:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      TZ: ${TZ:-UTC}
+
+  # Local Bot API server: lifts the upload limit from 50 MB to 2000 MB.
+  # Set TELEGRAM_API_URL=http://telegram-bot-api:8081 for the bot.
+  telegram-bot-api:
+    profiles: [telegram-local]
+    image: aiogram/telegram-bot-api:10.4
+    networks:
+      - tg_net
+    volumes:
+      - tg-data:/var/lib/telegram-bot-api
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+
 networks:
   core_net:
+  # Bot and local Bot API server only. The core is not on it.
+  tg_net:
 
 volumes:
   data:
+  secrets:
+  bot-data:
+  tg-data:
