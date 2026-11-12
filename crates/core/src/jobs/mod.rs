@@ -10,6 +10,7 @@
 //! a download future would orphan yt-dlp's children.
 
 pub mod cleanup;
+mod delete;
 mod disk;
 pub mod hub;
 pub mod progress_tracker;
@@ -246,38 +247,5 @@ impl JobManager {
                 None => self.owned(owner, id).await,
             },
         }
-    }
-
-    /// Remove the row, stop the job if it is queued or running, then remove
-    /// its files.
-    ///
-    /// The row goes first: from then on a concurrent resume cannot requeue
-    /// it, and a worker admitted late fails its first store write before it
-    /// creates the directory. A worker that started earlier is still in its
-    /// slot when the job is detached, so it is stopped and awaited before the
-    /// directory is removed.
-    pub async fn delete(&self, owner: &str, id: &str) -> Result<(), ManagerError> {
-        // Ownership first: `id` comes from the request and names a directory.
-        self.owned(owner, id).await?;
-        let thumb = self.store().delete(id).await.map_err(internal)?;
-        match self.detach(id) {
-            Tracked::Dequeued => self.schedule(),
-            Tracked::Running { cancel, finished } => {
-                cancel.cancel();
-                finished.cancelled().await;
-            }
-            Tracked::Untracked => {}
-        }
-        // Left behind on failure, startup recovery removes it as an orphan.
-        if let Err(e) = recovery::remove_dir(&self.config().downloads_dir.join(id)).await {
-            tracing::warn!(job = %id, error = %e, "cannot remove deleted job dir");
-        }
-        self.hub().forget(id);
-        if let Some(thumb) = thumb {
-            recovery::remove_file(&thumb).await;
-        }
-        self.refresh_disk().await;
-        self.schedule();
-        Ok(())
     }
 }

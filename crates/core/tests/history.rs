@@ -170,10 +170,6 @@ async fn thumb_served_and_purged() {
     let r = s.get(&format!("/api/v1/history/{plain}/thumb")).await;
     assert_eq!(r.status(), 404);
 
-    // Removing the job removes its thumbnail.
-    s.delete(&format!("/api/v1/jobs/{id}")).await;
-    assert!(!thumb_of(&s.data, &id).exists());
-
     // Expired rows (and their thumbnails) go after `history_days`.
     let s = TestServer::start(|c| c.history_days = 0).await;
     let id = done(&s, "https://thumb.example/v").await;
@@ -185,4 +181,41 @@ async fn thumb_served_and_purged() {
     })
     .await;
     assert!(!thumb_of(&s.data, &id).exists());
+}
+
+#[tokio::test]
+async fn removing_a_finished_job_keeps_it_in_history() {
+    let s = TestServer::start(|_| {}).await;
+    let id = done(&s, "https://thumb.example/v").await;
+    assert_eq!(s.delete(&format!("/api/v1/jobs/{id}")).await.status(), 204);
+    // The file goes, the row stays as `expired` with its thumbnail.
+    assert!(!s.downloads.join(&id).exists());
+    assert_eq!(state(&s, &id).await, JobState::Expired);
+    assert!(thumb_of(&s.data, &id).is_file());
+    let entries = history(&s).await;
+    assert_eq!(ids(&entries), [id.as_str()]);
+    assert_eq!(entries[0]["file_available"], false);
+    assert_eq!(entries[0]["has_thumbnail"], true);
+    let r = s.get(&format!("/api/v1/jobs/{id}/file")).await;
+    assert_eq!(r.status(), 404);
+    // It is no longer one of the visitor's jobs, and removing it again is fine.
+    let jobs: Value = s.get("/api/v1/jobs").await.json().await.unwrap();
+    assert!(jobs["jobs"].as_array().unwrap().is_empty());
+    assert_eq!(s.delete(&format!("/api/v1/jobs/{id}")).await.status(), 204);
+    assert_eq!(ids(&history(&s).await), [id.as_str()]);
+}
+
+#[tokio::test]
+async fn removing_an_unfinished_job_deletes_it_and_any_thumbnail() {
+    let s = TestServer::start(|_| {}).await;
+    let id = cancelled_partial(&s).await;
+    // As if a completion racing the removal had moved a thumbnail in.
+    let thumb = thumb_of(&s.data, &id);
+    std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+    std::fs::write(&thumb, "fake jpeg").unwrap();
+    assert_eq!(s.delete(&format!("/api/v1/jobs/{id}")).await.status(), 204);
+    assert!(s.store.get(&id).await.unwrap().is_none());
+    assert!(!s.downloads.join(&id).exists());
+    assert!(!thumb.exists());
+    assert!(history(&s).await.is_empty());
 }
