@@ -252,7 +252,13 @@ Le profil `telegram-local` démarre un serveur Bot API local. Le bot peut alors 
    COMPOSE_PROFILES=telegram,telegram-local
    ```
 
-AprÃ¨s `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local (`curl -X POST http://telegram-bot-api:8081/bot<jeton>/close` depuis le réseau du conteneur) et attendre une dizaine de minutes. Le volume `tg-data` garde les fichiers envoyés et grossit avec le temps.
+Après `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local, puis attendre une dizaine de minutes. L'image du serveur local n'a ni `curl` ni `wget` : lancez l'appel depuis un conteneur jetable branché sur le même réseau :
+
+```bash
+docker run --rm --network <projet>_tg_net curlimages/curl -s -X POST http://telegram-bot-api:8081/bot<jeton>/close
+```
+
+`<projet>` est le nom du projet compose (`docker network ls` affiche le nom exact du réseau, qui finit par `_tg_net`). Le volume `tg-data` garde les fichiers envoyés et grossit avec le temps.
 
 ### Clé et état
 
