@@ -95,3 +95,31 @@ async fn link_dead_after_job_deleted() {
         "Link expired or invalid"
     );
 }
+
+/// The token carries whole seconds: the reported expiry is exactly its `exp`.
+#[tokio::test]
+async fn reported_expiry_matches_the_token() {
+    let s = TestServer::start(|_| {}).await;
+    let id = s.create("https://ok").await;
+    s.wait_job(&id, "done").await;
+    let link = mint(&s, &id).await;
+    let at = link["expires_at"].as_str().unwrap();
+    assert!(at.ends_with(".000Z"), "{at}");
+    let token = link["url"].as_str().unwrap().rsplit('/').next().unwrap();
+    let exp: i64 = token.split('.').nth(1).unwrap().parse().unwrap();
+    let at = chrono::DateTime::parse_from_rfc3339(at).unwrap();
+    assert_eq!(at.timestamp(), exp);
+}
+
+/// A file expiry that does not parse refuses the link instead of skipping
+/// the cap.
+#[tokio::test]
+async fn unreadable_file_expiry_fails_closed() {
+    let s = TestServer::start(|_| {}).await;
+    let id = s.create("https://ok").await;
+    s.wait_job(&id, "done").await;
+    s.store.set_expires_at(&id, "not a date").await.unwrap();
+    let r = s.post(&format!("/api/v1/jobs/{id}/link"), json!({})).await;
+    assert_eq!(r.status(), 500);
+    assert_eq!(r.json::<Value>().await.unwrap()["code"], "internal");
+}
