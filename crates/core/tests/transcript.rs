@@ -224,3 +224,28 @@ fn leftover_temp_dirs_are_swept() {
     assert_eq!(sweep_leftovers(data.path()), 1);
     assert!(!tmp.join("subs-abc").exists() && tmp.join("other").exists());
 }
+
+#[tokio::test]
+async fn an_unavailable_language_lists_what_exists() {
+    let s = TestServer::start(|_| {}).await;
+    let r = s
+        .post(
+            TRANSCRIPT,
+            json!({"url": "https://subs-manual.example/v", "language": "ja"}),
+        )
+        .await;
+    assert_eq!(r.status(), 422);
+    let b: Value = r.json().await.unwrap();
+    assert_eq!(b["code"], "unavailable");
+    assert_eq!(b["message"], "No subtitles in ja. Available: de, en");
+}
+
+#[tokio::test]
+async fn a_failing_second_pass_is_reported_and_cleaned_up() {
+    let s = TestServer::start(|_| {}).await;
+    let r = s
+        .post(TRANSCRIPT, body("https://subs-fail.example/v"))
+        .await;
+    assert_eq!(r.status(), 500);
+    assert_eq!(std::fs::read_dir(s.data.join("tmp")).unwrap().count(), 0);
+}

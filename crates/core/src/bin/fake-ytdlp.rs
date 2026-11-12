@@ -212,6 +212,7 @@ fn tracks(
         () if url.contains("subs-enus") => ("en", &["en-US"], &[]),
         () if url.contains("subs-frfr") => ("fr", &["fr-FR"], &[]),
         () if url.contains("subs-fr") => ("fr", &["fr"], &[]),
+        () if url.contains("subs-fail") => ("en", &["en"], &[]),
         () if url.contains("subs-lost") => ("en", &["en"], &[]),
         _ => ("en", &[], &[]),
     }
@@ -242,6 +243,10 @@ fn subtitles(args: &[String], url: &str, template: String) {
         .find(|w| w[0] == "--sub-langs")
         .map_or("", |w| w[1].as_str());
     let key = langs.replace('\\', "");
+    if url.contains("subs-fail") {
+        eprintln!("ERROR: [fake] subtitle download exploded");
+        exit(1);
+    }
     if url.contains("subs-lost") {
         eprintln!("WARNING: Unable to download video subtitles for '{key}': HTTP Error 429");
         return;

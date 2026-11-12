@@ -65,7 +65,12 @@ pub fn parse_tracks(stdout: &str) -> Tracks {
         let mut k: Vec<String> = json
             .get(field)
             .and_then(Value::as_object)
-            .map(|o| o.keys().filter(|k| *k != "live_chat").cloned().collect())
+            .map(|o| {
+                o.keys()
+                    .filter(|k| *k != "live_chat" && is_safe_key(k))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         k.sort();
         k
@@ -79,6 +84,26 @@ pub fn parse_tracks(stdout: &str) -> Tracks {
         manual: keys("subtitles"),
         automatic: keys("automatic_captions"),
     }
+}
+
+/// A track key that is safe to put in a file name and a yt-dlp selector.
+pub fn is_safe_key(key: &str) -> bool {
+    (1..=64).contains(&key.len())
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Track keys to tell the caller about: uploaded first, at most 20.
+pub fn available(t: &Tracks) -> Vec<&str> {
+    let mut keys: Vec<&str> = Vec::new();
+    for k in t.manual.iter().chain(&t.automatic) {
+        if !keys.contains(&k.as_str()) {
+            keys.push(k);
+        }
+    }
+    keys.truncate(20);
+    keys
 }
 
 /// `key` is `want` or a regional variant of it (`fr-FR` for `fr`).
@@ -124,7 +149,13 @@ pub fn choose(t: &Tracks, requested: Option<&str>) -> Option<Track> {
         .or_else(|| manual(variant(&t.manual, "en")))
         .or_else(|| manual(t.manual.first()))
         .or_else(|| auto(orig.as_deref().and_then(|o| exact(&t.automatic, o))))
-        .or_else(|| auto(t.automatic.iter().find(|k| k.ends_with("-orig"))))
+        .or_else(|| {
+            // Without a known video language, any original-language captions.
+            let any_orig = lang
+                .is_none()
+                .then(|| t.automatic.iter().find(|k| k.ends_with("-orig")));
+            auto(any_orig.flatten())
+        })
         .or_else(|| auto(lang.and_then(|l| variant(&t.automatic, l))))
         .or_else(|| auto(variant(&t.automatic, "en")))
 }
@@ -141,6 +172,9 @@ pub fn escape_selector(key: &str) -> String {
 
 /// Text of `<dir>/sub.<key>.vtt`; `None` when the file is missing.
 pub fn read_track(dir: &Path, key: &str) -> Option<String> {
+    if !is_safe_key(key) {
+        return None;
+    }
     let path = dir.join(format!("{FILE_STEM}.{key}.vtt"));
     let mut buf = Vec::new();
     std::fs::File::open(path)
@@ -291,6 +325,25 @@ mod tests {
         let t = tracks(None, &[], &["en"]);
         assert_eq!(pick(&t, None), Some(("en".into(), true)));
         assert_eq!(pick(&tracks(None, &[], &[]), None), None);
+        let t = tracks(Some("fr"), &[], &["de-orig", "fr", "en"]);
+        assert_eq!(pick(&t, None), Some(("fr".into(), true)));
+        let t = tracks(None, &[], &["de-orig", "en"]);
+        assert_eq!(pick(&t, None), Some(("de-orig".into(), true)));
+    }
+
+    #[test]
+    fn unsafe_keys_are_dropped_and_listing_is_capped() {
+        let json =
+            r#"reclip-meta:{"subtitles":{"../x":[],"a/b":[],"en":[]},"automatic_captions":{}}"#;
+        assert_eq!(parse_tracks(json).manual, ["en"]);
+        let many: Vec<String> = (0..30).map(|i| format!("l{i}")).collect();
+        let t = Tracks {
+            language: None,
+            manual: many.clone(),
+            automatic: many,
+        };
+        assert_eq!(available(&t).len(), 20);
+        assert!(read_track(Path::new("."), "../x").is_none());
     }
 
     #[test]

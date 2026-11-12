@@ -19,7 +19,7 @@ use super::finalize::finalize;
 use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
-use super::subs::{TMP_PREFIX, choose, parse_tracks, read_track};
+use super::subs::{TMP_PREFIX, available, choose, parse_tracks, read_track};
 use crate::config::Config;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -136,7 +136,16 @@ pub async fn transcript(
         return Err(failure(cfg, &meta));
     }
     let none = || err(ErrorCode::Unavailable, "No subtitles available");
-    let track = choose(&parse_tracks(&meta.stdout), language).ok_or_else(none)?;
+    let tracks = parse_tracks(&meta.stdout);
+    let Some(track) = choose(&tracks, language) else {
+        return Err(match (language, available(&tracks)) {
+            (Some(lang), keys) if !keys.is_empty() => err(
+                ErrorCode::Unavailable,
+                format!("No subtitles in {lang}. Available: {}", keys.join(", ")),
+            ),
+            _ => none(),
+        });
+    };
     let root = cfg.data_dir.join("tmp");
     std::fs::create_dir_all(&root).map_err(io_err)?;
     let dir = tempfile::Builder::new()
