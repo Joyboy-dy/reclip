@@ -3,15 +3,15 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use reclip_shared::{CreateJobRequest, MediaFormat, ProbeResponse};
+use reclip_shared::{CreateJobRequest, ErrorCode, MediaFormat, ProbeResponse};
 
 use crate::app::{App, MAX_CAPTION, MAX_TITLE, cancel_keyboard, clip, core_error_text};
 use crate::choice;
-use crate::core_client::Core;
+use crate::core_client::{Core, CoreError};
 use crate::i18n::{self, Lang};
 use crate::pending::{Choice, qualities};
 use crate::router::{Command, find_link, parse_command};
-use crate::state::Tracked;
+use crate::state::{Tracked, valid_job_id};
 use crate::telegram::{
     CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageId, Telegram, User,
 };
@@ -194,6 +194,13 @@ pub(crate) async fn start_job<T: Telegram + 'static, C: Core + 'static>(
             return;
         }
     };
+    if !valid_job_id(&job.id) {
+        // It would end up in paths and button data: refuse to follow it.
+        tracing::warn!(user = c.user_id, "the core returned an invalid job id");
+        let text = i18n::error(c.lang, ErrorCode::Internal, None);
+        app.replace(chat, msg, &text, None).await;
+        return;
+    }
     tracing::info!(user = c.user_id, job = %job.id, ?format, "job created");
     let text = i18n::queued(c.lang, &c.title);
     let kb = cancel_keyboard(c.lang, &job.id);
@@ -220,21 +227,37 @@ pub async fn on_cancel_button<T: Telegram + 'static, C: Core + 'static>(
     job: &str,
 ) {
     let l = lang(&cb.from);
-    let reply = match app.state.get(job) {
-        None => i18n::nothing_to_cancel(l),
+    let t = match app.state.get(job) {
+        None => return app.answer(&cb.id, Some(&i18n::nothing_to_cancel(l))).await,
         Some(t) if t.user_id != cb.from.id => {
             tracing::info!(user = cb.from.id, job, "foreign cancel click refused");
-            i18n::not_yours(l)
+            return app.answer(&cb.id, Some(&i18n::not_yours(l))).await;
         }
-        Some(t) => match app.core.cancel_job(t.user_id, job).await {
-            Ok(()) => {
-                tracing::info!(user = t.user_id, job, "cancel requested");
-                i18n::cancelled(l)
-            }
-            Err(e) => core_error_text(l, &e),
-        },
+        Some(t) => t,
     };
-    app.answer(&cb.id, Some(&reply)).await;
+    // Answered first: the core may take a while to stop the download, and
+    // Telegram drops answers to old clicks. The tracker shows the result.
+    app.answer(&cb.id, Some(&i18n::cancelling(l))).await;
+    if let Err(e) = cancel_one(app, &t).await {
+        app.say(t.chat_id, &core_error_text(l, &e), None).await;
+    }
+}
+
+/// Stops a delivery in progress, or asks the core to cancel the job.
+async fn cancel_one<T: Telegram + 'static, C: Core + 'static>(
+    app: &Arc<App<T, C>>,
+    t: &Tracked,
+) -> Result<(), CoreError> {
+    if app.deliveries.abort(&t.job_id) {
+        tracing::info!(user = t.user_id, job = %t.job_id, "delivery aborted");
+        return Ok(());
+    }
+    let r = app.core.cancel_job(t.user_id, &t.job_id).await;
+    match &r {
+        Ok(()) => tracing::info!(user = t.user_id, job = %t.job_id, "cancel requested"),
+        Err(e) => tracing::info!(job = %t.job_id, status = e.status, "cancel failed"),
+    }
+    r
 }
 
 /// `/cancel`: cancels every job of the user that the bot follows.
@@ -246,9 +269,8 @@ async fn cancel_all<T: Telegram + 'static, C: Core + 'static>(
 ) {
     let mut n = 0;
     for t in app.state.for_user(user) {
-        match app.core.cancel_job(user, &t.job_id).await {
-            Ok(()) => n += 1,
-            Err(e) => tracing::info!(user, job = %t.job_id, status = e.status, "cancel failed"),
+        if cancel_one(app, &t).await.is_ok() {
+            n += 1;
         }
     }
     let text = if n == 0 {

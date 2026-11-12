@@ -26,6 +26,44 @@ pub fn jobs_list(l: Lang, titles: &[String]) -> String {
     out
 }
 
+pub fn cancelling(l: Lang) -> String {
+    l.pick("Annulation...", "Cancelling...")
+}
+
+pub fn job_gone(l: Lang) -> String {
+    l.pick(
+        "Ce téléchargement n'est plus disponible.",
+        "This download is no longer available.",
+    )
+}
+
+/// The upload through Telegram failed (not a size problem).
+pub fn send_failed_link(l: Lang, link: &str) -> String {
+    match l {
+        Lang::Fr => format!(
+            "L'envoi par Telegram a échoué. Télécharge le fichier ici (lien temporaire) :\n{link}"
+        ),
+        Lang::En => format!(
+            "Sending through Telegram failed. Download the file here (temporary link):\n{link}"
+        ),
+    }
+}
+
+/// No usable public address for a download link.
+pub fn link_unavailable(l: Lang, too_big: bool) -> String {
+    let first = match (l, too_big) {
+        (Lang::Fr, true) => "Le fichier est trop gros pour Telegram.",
+        (Lang::Fr, false) => "Le fichier n'a pas pu être envoyé par Telegram.",
+        (Lang::En, true) => "The file is too big for Telegram.",
+        (Lang::En, false) => "The file could not be sent through Telegram.",
+    };
+    let rest = l.pick(
+        "Il pourra être téléchargé depuis le site ReClip une fois son adresse configurée.",
+        "It can be downloaded from the ReClip website once its address is configured.",
+    );
+    format!("{first} {rest}")
+}
+
 pub fn file_expired(l: Lang) -> String {
     l.pick(
         "Le fichier a expiré avant l'envoi. Renvoie le lien pour recommencer.",

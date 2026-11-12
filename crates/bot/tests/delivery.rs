@@ -83,9 +83,10 @@ async fn cancel_button_cancels() {
         *e.app.core.cancelled.lock().unwrap(),
         vec![(5, "job1".to_string())]
     );
+    // Answered at once; the tracker then shows the result.
     assert_eq!(
         e.app.tg.answers().last().cloned().flatten(),
-        Some(i18n::cancelled(Lang::En))
+        Some(i18n::cancelling(Lang::En))
     );
     assert_eq!(edits_of(&e, 100).last(), Some(&i18n::cancelled(Lang::En)));
     assert!(e.app.state.snapshot().is_empty());
@@ -156,15 +157,25 @@ async fn large_file_gets_signed_link() {
     let last = edits_of(&e, 100).last().cloned().unwrap();
     assert_eq!(
         last,
-        i18n::file_too_big(Lang::En, 5000, "https://reclip.example/d/job1?sig=s")
+        i18n::file_too_big(Lang::En, Some(5000), "https://reclip.example/d/job1?sig=s")
     );
+}
 
-    // Size unknown until downloaded: checked after the download.
+#[tokio::test]
+async fn size_cap_during_download() {
+    // Size unknown: the download stops at the upload limit, then a link.
     let e = env(core(vec![done(None, None)], 5000));
     start_mp3(&e).await;
     assert_eq!(e.app.core.downloads.lock().unwrap().len(), 1);
     assert_eq!(e.app.core.links.lock().unwrap().len(), 1);
     assert!(e.app.state.snapshot().is_empty());
+    assert!(e.app.core.deleted.lock().unwrap().is_empty(), "job kept");
+    let last = edits_of(&e, 100).last().cloned().unwrap();
+    assert_eq!(
+        last,
+        i18n::file_too_big(Lang::En, None, "https://reclip.example/d/job1?sig=s")
+    );
+    assert!(!last.contains("0 B"));
 }
 
 #[tokio::test]

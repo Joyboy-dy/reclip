@@ -47,8 +47,12 @@ fn messages_carry_their_data() {
     assert_eq!(btn_audio(Lang::En), "🎵 MP3");
     assert!(jobs_list(Lang::En, &["A".into(), "B".into()]).contains("• B"));
     assert!(cancelled_count(Lang::Fr, 2).contains('2'));
-    assert!(file_too_big(Lang::En, 3 * 1024 * 1024, "https://x/d/t").contains("https://x/d/t"));
-    assert!(file_too_big(Lang::En, 3 * 1024 * 1024, "l").contains("3.0 MB"));
+    assert!(file_too_big(Lang::En, Some(3 << 20), "https://x/d/t").contains("https://x/d/t"));
+    assert!(file_too_big(Lang::En, Some(3 << 20), "l").contains("3.0 MB"));
+    assert!(file_too_big(Lang::Fr, None, "l").starts_with("Le fichier est trop gros"));
+    assert!(send_failed_link(Lang::En, "https://x/d/t").contains("https://x/d/t"));
+    assert!(!link_unavailable(Lang::En, false).contains("too big"));
+    assert!(link_unavailable(Lang::Fr, true).contains("trop gros"));
     let p = progress(Lang::En, "T", Some(42.4), Some(2048), Some(9));
     assert!(p.contains("42 %") && p.contains("2.0 KB/s") && p.contains("9 s left"));
     assert!(progress(Lang::Fr, "T", None, None, None).contains("Téléchargement"));

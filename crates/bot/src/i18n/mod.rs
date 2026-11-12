@@ -173,14 +173,17 @@ pub fn link_expired(l: Lang) -> String {
     )
 }
 
-pub fn file_too_big(l: Lang, size: u64, link: &str) -> String {
-    let s = human_size(size);
+/// `size` is shown when known.
+pub fn file_too_big(l: Lang, size: Option<u64>, link: &str) -> String {
+    let s = size
+        .map(|n| format!(" ({})", human_size(n)))
+        .unwrap_or_default();
     match l {
         Lang::Fr => format!(
-            "Le fichier ({s}) est trop gros pour Telegram. Télécharge-le ici (lien temporaire) :\n{link}"
+            "Le fichier{s} est trop gros pour Telegram. Télécharge-le ici (lien temporaire) :\n{link}"
         ),
         Lang::En => format!(
-            "The file ({s}) is too big for Telegram. Download it here (temporary link):\n{link}"
+            "The file{s} is too big for Telegram. Download it here (temporary link):\n{link}"
         ),
     }
 }

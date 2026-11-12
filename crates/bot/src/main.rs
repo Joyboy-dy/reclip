@@ -3,6 +3,7 @@ use std::time::Duration;
 use reclip_bot::app::{App, Settings};
 use reclip_bot::config::Config;
 use reclip_bot::core_client::HttpCore;
+use reclip_bot::files::wipe_tmp;
 use reclip_bot::state::StateStore;
 use reclip_bot::telegram::HttpTelegram;
 
@@ -27,17 +28,11 @@ async fn main() {
     tracing::info!(?cfg, "configuration loaded");
     let tg = HttpTelegram::new(&cfg.api_url, &cfg.token).unwrap_or_else(|e| fail("telegram", &e));
     let core = HttpCore::new(&cfg.core_url, &cfg.key).unwrap_or_else(|e| fail("core", &e));
-    let state = match StateStore::load(&cfg.state_path) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %format!("{e:#}"), "unreadable state, starting empty");
-            StateStore::empty(&cfg.state_path)
-        }
-    };
-    let tmp_dir = std::env::temp_dir().join("reclip-bot");
+    // A corrupt file is renamed aside, not overwritten.
+    let state = StateStore::open(&cfg.state_path);
     // Leftovers of a crash: tracked jobs are downloaded again.
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-    let app = App::new(tg, core, Settings::from_config(&cfg, tmp_dir), state);
+    wipe_tmp(&cfg.tmp_dir);
+    let app = App::new(tg, core, Settings::from_config(&cfg), state);
     let resumed = app.resume();
     tracing::info!(resumed, "bot started");
 

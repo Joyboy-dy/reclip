@@ -75,6 +75,10 @@ pub fn settings(dir: &Path) -> Settings {
         choice_ttl: Duration::from_secs(1800),
         error_pause: Duration::from_millis(2),
         long_poll_secs: 50,
+        // No gate unless a test asks for one.
+        edit_gap: Duration::ZERO,
+        max_deliveries: 3,
+        upload_attempts: 3,
     }
 }
 

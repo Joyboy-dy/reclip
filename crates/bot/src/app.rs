@@ -11,6 +11,7 @@ use tokio_util::task::TaskTracker;
 use crate::config::Config;
 use crate::core_client::{Core, CoreError};
 use crate::i18n::{self, Lang};
+use crate::limits::{ChatGate, Deliveries};
 use crate::pending::Pending;
 use crate::state::{StateStore, Tracked};
 use crate::telegram::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, Telegram};
@@ -38,18 +39,28 @@ pub struct Settings {
     pub error_pause: Duration,
     /// `getUpdates` long-poll timeout, in seconds.
     pub long_poll_secs: u64,
+    /// Smallest gap between two progress edits in one chat.
+    pub edit_gap: Duration,
+    /// Deliveries running at once.
+    pub max_deliveries: usize,
+    /// Upload attempts when Telegram answers 429 (on top of the client's
+    /// own single retry).
+    pub upload_attempts: u32,
 }
 
 impl Settings {
-    pub fn from_config(cfg: &Config, tmp_dir: PathBuf) -> Settings {
+    pub fn from_config(cfg: &Config) -> Settings {
         Settings {
             max_upload: cfg.max_upload,
             public_url: cfg.public_url.clone(),
-            tmp_dir,
+            tmp_dir: cfg.tmp_dir.clone(),
             poll_interval: Duration::from_secs(3),
             choice_ttl: Duration::from_secs(30 * 60),
             error_pause: Duration::from_secs(5),
             long_poll_secs: 50,
+            edit_gap: Duration::from_millis(1100),
+            max_deliveries: cfg.max_deliveries,
+            upload_attempts: 3,
         }
     }
 }
@@ -60,6 +71,9 @@ pub struct App<T, C> {
     pub settings: Settings,
     pub state: StateStore,
     pending: Mutex<Pending>,
+    /// Progress edits per chat.
+    pub gate: ChatGate,
+    pub deliveries: Arc<Deliveries>,
     /// Cancelled on SIGTERM / Ctrl-C: the loop and the trackers stop.
     pub shutdown: CancellationToken,
     /// Update handlers and trackers.
@@ -69,12 +83,16 @@ pub struct App<T, C> {
 impl<T: Telegram + 'static, C: Core + 'static> App<T, C> {
     pub fn new(tg: T, core: C, settings: Settings, state: StateStore) -> Arc<Self> {
         let pending = Mutex::new(Pending::new(settings.choice_ttl));
+        let gate = ChatGate::new(settings.edit_gap);
+        let deliveries = Arc::new(Deliveries::new(settings.max_deliveries));
         Arc::new(App {
             tg,
             core,
             settings,
             state,
             pending,
+            gate,
+            deliveries,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         })

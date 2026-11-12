@@ -110,6 +110,16 @@ pub trait Core: Send + Sync {
         id: &str,
         dest: &Path,
     ) -> impl Future<Output = Result<u64, CoreError>> + Send;
+    /// Like [`Core::download_file`], but stops as soon as the file is known
+    /// to exceed `max` bytes (`Content-Length` or bytes received): the
+    /// partial file is removed and the answer is `Ok(None)`.
+    fn download_file_capped(
+        &self,
+        user: i64,
+        id: &str,
+        dest: &Path,
+        max: u64,
+    ) -> impl Future<Output = Result<Option<u64>, CoreError>> + Send;
     fn signed_link(
         &self,
         user: i64,
@@ -156,6 +166,48 @@ impl HttpCore {
         } else {
             Err(CoreError::from_response(resp).await)
         }
+    }
+
+    /// Streams the job file to `<dest>.part`, then renames it to `dest`.
+    /// With `max`, gives up (`Ok(None)`) once the file is known to be
+    /// larger. The partial file is removed on any early exit.
+    async fn fetch_file(
+        &self,
+        user: i64,
+        id: &str,
+        dest: &Path,
+        max: Option<u64>,
+    ) -> Result<Option<u64>, CoreError> {
+        let r = self
+            .req(Method::GET, &format!("/jobs/{id}/file"), Some(user))
+            .timeout(Duration::from_secs(30 * 60));
+        let mut resp = Self::send(r).await?;
+        let over = |n: u64| max.is_some_and(|m| n > m);
+        if resp.content_length().is_some_and(over) {
+            return Ok(None);
+        }
+        let part = part_path(dest);
+        // Declared before the file so the file is closed first when dropped.
+        let mut guard = PartGuard {
+            path: part.clone(),
+            committed: false,
+        };
+        let io =
+            |e: std::io::Error| CoreError::local(format!("cannot write {}: {e}", dest.display()));
+        let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
+        let mut total = 0u64;
+        while let Some(chunk) = resp.chunk().await.map_err(CoreError::transport)? {
+            total += chunk.len() as u64;
+            if over(total) {
+                return Ok(None);
+            }
+            file.write_all(&chunk).await.map_err(io)?;
+        }
+        file.flush().await.map_err(io)?;
+        drop(file);
+        tokio::fs::rename(&part, dest).await.map_err(io)?;
+        guard.committed = true;
+        Ok(Some(total))
     }
 
     async fn json<T: DeserializeOwned>(r: RequestBuilder) -> Result<T, CoreError> {
@@ -207,29 +259,18 @@ impl Core for HttpCore {
     }
 
     async fn download_file(&self, user: i64, id: &str, dest: &Path) -> Result<u64, CoreError> {
-        let r = self
-            .req(Method::GET, &format!("/jobs/{id}/file"), Some(user))
-            .timeout(Duration::from_secs(30 * 60));
-        let mut resp = Self::send(r).await?;
-        let part = part_path(dest);
-        // Declared before the file so the file is closed first when dropped.
-        let mut guard = PartGuard {
-            path: part.clone(),
-            committed: false,
-        };
-        let io =
-            |e: std::io::Error| CoreError::local(format!("cannot write {}: {e}", dest.display()));
-        let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
-        let mut total = 0u64;
-        while let Some(chunk) = resp.chunk().await.map_err(CoreError::transport)? {
-            file.write_all(&chunk).await.map_err(io)?;
-            total += chunk.len() as u64;
-        }
-        file.flush().await.map_err(io)?;
-        drop(file);
-        tokio::fs::rename(&part, dest).await.map_err(io)?;
-        guard.committed = true;
-        Ok(total)
+        let n = self.fetch_file(user, id, dest, None).await?;
+        Ok(n.unwrap_or(0)) // never None without a cap
+    }
+
+    async fn download_file_capped(
+        &self,
+        user: i64,
+        id: &str,
+        dest: &Path,
+        max: u64,
+    ) -> Result<Option<u64>, CoreError> {
+        self.fetch_file(user, id, dest, Some(max)).await
     }
 
     async fn signed_link(&self, user: i64, id: &str) -> Result<LinkResponse, CoreError> {

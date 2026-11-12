@@ -1,12 +1,13 @@
 //! Bot configuration, read from environment variables.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 pub const OFFICIAL_API: &str = "https://api.telegram.org";
 const OFFICIAL_MAX_UPLOAD: u64 = 50 * 1024 * 1024;
 const LOCAL_MAX_UPLOAD: u64 = 2000 * 1024 * 1024;
+const DEFAULT_MAX_DELIVERIES: usize = 3;
 
 #[derive(Clone)]
 pub struct Config {
@@ -19,6 +20,10 @@ pub struct Config {
     pub max_upload: u64,
     /// Public address of the ReClip website (`RECLIP_PUBLIC_URL`), if known.
     pub public_url: Option<String>,
+    /// Where files wait between the core and Telegram (`RECLIP_BOT_TMP`).
+    pub tmp_dir: PathBuf,
+    /// Downloads + uploads running at once (`RECLIP_BOT_MAX_DELIVERIES`).
+    pub max_deliveries: usize,
 }
 
 // The token and key are secrets: never print them.
@@ -30,6 +35,8 @@ impl std::fmt::Debug for Config {
             .field("state_path", &self.state_path)
             .field("max_upload", &self.max_upload)
             .field("public_url", &self.public_url)
+            .field("tmp_dir", &self.tmp_dir)
+            .field("max_deliveries", &self.max_deliveries)
             .finish_non_exhaustive()
     }
 }
@@ -59,7 +66,7 @@ impl Config {
                 k
             }
         };
-        let state_path = val("RECLIP_BOT_STATE")
+        let state_path: PathBuf = val("RECLIP_BOT_STATE")
             .unwrap_or_else(|| "/var/lib/reclip-bot/state.json".into())
             .into();
         let max_upload = match val("RECLIP_BOT_MAX_UPLOAD") {
@@ -68,6 +75,23 @@ impl Config {
             None => LOCAL_MAX_UPLOAD,
         };
         let public_url = val("RECLIP_PUBLIC_URL").map(|u| trim_url(&u));
+        // Next to the state file by default: on the bot's volume.
+        let tmp_dir = match val("RECLIP_BOT_TMP") {
+            Some(d) => PathBuf::from(d),
+            None => state_path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
+                .join("tmp"),
+        };
+        let max_deliveries = match val("RECLIP_BOT_MAX_DELIVERIES") {
+            Some(v) => v
+                .parse::<usize>()
+                .ok()
+                .filter(|n| *n >= 1)
+                .context("RECLIP_BOT_MAX_DELIVERIES must be a number of at least 1")?,
+            None => DEFAULT_MAX_DELIVERIES,
+        };
         Ok(Config {
             token,
             api_url,
@@ -76,6 +100,8 @@ impl Config {
             state_path,
             max_upload,
             public_url,
+            tmp_dir,
+            max_deliveries,
         })
     }
 }
@@ -129,17 +155,38 @@ mod tests {
             PathBuf::from("/var/lib/reclip-bot/state.json")
         );
         assert_eq!(c.public_url, None);
+        assert_eq!(c.tmp_dir, PathBuf::from("/var/lib/reclip-bot/tmp"));
+        assert_eq!(c.max_deliveries, 3);
     }
 
     #[test]
-    fn public_url_is_optional_and_trimmed() {
+    fn public_url_tmp_and_deliveries() {
         let c = Config::from_env(&env(&[
             ("TELEGRAM_BOT_TOKEN", "t"),
             ("RECLIP_BOT_KEY", "k"),
             ("RECLIP_PUBLIC_URL", "https://reclip.example/"),
+            ("RECLIP_BOT_STATE", "/data/s.json"),
+            ("RECLIP_BOT_MAX_DELIVERIES", "5"),
         ]))
         .unwrap();
         assert_eq!(c.public_url.as_deref(), Some("https://reclip.example"));
+        assert_eq!(c.tmp_dir, PathBuf::from("/data/tmp"));
+        assert_eq!(c.max_deliveries, 5);
+        let c = Config::from_env(&env(&[
+            ("TELEGRAM_BOT_TOKEN", "t"),
+            ("RECLIP_BOT_KEY", "k"),
+            ("RECLIP_BOT_TMP", "/scratch"),
+        ]))
+        .unwrap();
+        assert_eq!(c.tmp_dir, PathBuf::from("/scratch"));
+        for bad in ["0", "x"] {
+            let e = Config::from_env(&env(&[
+                ("TELEGRAM_BOT_TOKEN", "t"),
+                ("RECLIP_BOT_KEY", "k"),
+                ("RECLIP_BOT_MAX_DELIVERIES", bad),
+            ]));
+            assert!(e.is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::core_client::Core;
+use crate::state::valid_job_id;
 use crate::telegram::{ChatKind, Telegram, Update};
 use crate::{choice, flow};
 
@@ -82,7 +83,7 @@ pub fn parse_command(text: &str) -> Option<Command> {
 pub fn parse_callback(data: &str) -> Option<Callback> {
     let (kind, rest) = data.split_once(':')?;
     match kind {
-        "x" if !rest.is_empty() => Some(Callback::Cancel { job: rest.into() }),
+        "x" if valid_job_id(rest) => Some(Callback::Cancel { job: rest.into() }),
         "f" | "q" => {
             let (choice, arg) = rest.split_once(':')?;
             if choice.is_empty() {
@@ -173,7 +174,9 @@ mod tests {
                 job: "0190-aa".into()
             })
         );
-        for bad in ["", "x:", "f:ab:z", "q:ab:-1", "f::v", "zz:1", "f:ab"] {
+        for bad in [
+            "", "x:", "x:../a", "x:a b", "f:ab:z", "q:ab:-1", "f::v", "zz:1", "f:ab",
+        ] {
             assert_eq!(parse_callback(bad), None, "{bad}");
         }
     }

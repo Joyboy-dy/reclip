@@ -75,7 +75,16 @@ async fn vanished_job_is_dropped() {
     let app = restarted(dir.path(), FakeCore::default());
     app.resume();
     settle(&app).await;
-    assert!(app.tg.calls().is_empty(), "dropped silently");
+    // Dropped without an error; the stale progress loses its Cancel button.
+    assert_eq!(
+        app.tg.calls(),
+        vec![Call::Edit {
+            chat: 5,
+            msg: 77,
+            text: i18n::job_gone(Lang::Fr),
+            kb: None
+        }]
+    );
     let on_disk = StateStore::load(&dir.path().join("state.json")).unwrap();
     assert!(on_disk.snapshot().is_empty());
 }

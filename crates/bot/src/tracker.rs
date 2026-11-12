@@ -2,7 +2,7 @@
 //! then delivers the file or shows the failure.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reclip_shared::{ErrorCode, Job, JobState};
 
@@ -15,6 +15,7 @@ use crate::telegram::Telegram;
 
 /// The core answers 404 for a job that is gone or belongs to someone else.
 pub const NOT_FOUND: u16 = 404;
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 pub async fn track<T: Telegram + 'static, C: Core + 'static>(
     app: Arc<App<T, C>>,
@@ -23,16 +24,33 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
 ) {
     let l = Lang::from_stored(&t.lang);
     let kb = cancel_keyboard(l, &t.job_id);
+    let mut failures = 0u32;
     loop {
         let mut wait = app.settings.poll_interval;
-        match app.core.get_job(t.user_id, &t.job_id).await {
+        let read = app.core.get_job(t.user_id, &t.job_id).await;
+        if read.is_ok() {
+            failures = 0;
+        }
+        match read {
             Err(e) if e.status == NOT_FOUND => {
                 tracing::info!(job = %t.job_id, "job gone from the core, dropped");
                 app.state.remove(&t.job_id);
+                // No live Cancel button on a job that no longer exists.
+                let gone = i18n::job_gone(l);
+                if let Err(e) = app
+                    .tg
+                    .edit_message(t.chat_id, t.message_id, &gone, None)
+                    .await
+                {
+                    tracing::warn!(job = %t.job_id, error = %e, "edit failed");
+                }
                 return;
             }
             Err(e) => {
                 tracing::warn!(job = %t.job_id, status = e.status, error = %e, "cannot read the job");
+                // Back off up to a minute while the core misbehaves.
+                failures = failures.saturating_add(1);
+                wait = (wait * 2u32.saturating_pow(failures.min(5))).min(MAX_BACKOFF);
                 if let Some(s) = e.retry_after {
                     wait = wait.max(Duration::from_secs(s));
                 }
@@ -40,7 +58,9 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
             Ok(job) => match job.state {
                 JobState::Queued | JobState::Downloading | JobState::Processing => {
                     let text = clip(&running_text(l, &t.title, &job), MAX_TEXT);
-                    if text != shown {
+                    // Skipped when the chat was edited less than `edit_gap`
+                    // ago: the next poll shows the latest text.
+                    if text != shown && app.gate.allow(t.chat_id, Instant::now()) {
                         // A failed edit (429 twice, message deleted) only
                         // costs one progress step.
                         if let Err(e) = app

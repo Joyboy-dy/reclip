@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use reclip_bot::core_client::{Core, CoreError};
 use reclip_shared::*;
@@ -23,6 +24,12 @@ pub struct FakeCore {
     pub links: Mutex<Vec<String>>,
     /// Bytes written by `download_file`.
     pub file_bytes: Mutex<u64>,
+    /// When set, downloads write the file then never finish.
+    pub hold_downloads: AtomicBool,
+    /// Origin of signed links (default `https://reclip.example`).
+    pub link_base: Mutex<Option<String>>,
+    /// Id given to the next created job instead of `job<n>`.
+    pub next_job_id: Mutex<Option<String>>,
 }
 
 pub fn not_found() -> CoreError {
@@ -76,7 +83,8 @@ impl Core for FakeCore {
         let id = {
             let mut created = self.created.lock().unwrap();
             created.push((user, req.clone()));
-            format!("job{}", created.len())
+            let forced = self.next_job_id.lock().unwrap().take();
+            forced.unwrap_or_else(|| format!("job{}", created.len()))
         };
         let mut states: VecDeque<Job> = self.script.lock().unwrap().clone().into();
         if states.is_empty() {
@@ -116,17 +124,35 @@ impl Core for FakeCore {
         Ok(())
     }
     async fn download_file(&self, user: i64, id: &str, dest: &Path) -> Result<u64, CoreError> {
+        let n = self.download_file_capped(user, id, dest, u64::MAX).await?;
+        Ok(n.unwrap_or(0))
+    }
+    async fn download_file_capped(
+        &self,
+        user: i64,
+        id: &str,
+        dest: &Path,
+        max: u64,
+    ) -> Result<Option<u64>, CoreError> {
         self.owned(user, id)?;
         self.downloads.lock().unwrap().push(id.into());
         let n = *self.file_bytes.lock().unwrap();
+        if n > max {
+            return Ok(None); // the real client stops and removes the part
+        }
         std::fs::write(dest, vec![0u8; n as usize]).unwrap();
-        Ok(n)
+        if self.hold_downloads.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        Ok(Some(n))
     }
     async fn signed_link(&self, user: i64, id: &str) -> Result<LinkResponse, CoreError> {
         self.owned(user, id)?;
         self.links.lock().unwrap().push(id.into());
+        let base = self.link_base.lock().unwrap().clone();
+        let base = base.unwrap_or_else(|| "https://reclip.example".into());
         Ok(LinkResponse {
-            url: format!("https://reclip.example/d/{id}?sig=s"),
+            url: format!("{base}/d/{id}?sig=s"),
             expires_at: "2026-11-13T00:00:00Z".into(),
         })
     }

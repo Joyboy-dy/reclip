@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::time::Instant;
 
 use reclip_bot::telegram::*;
 
@@ -59,6 +60,18 @@ pub struct FakeTg {
     pub offsets: Mutex<Vec<i64>>,
     /// Every edit fails with a 429 (as after the client's single retry).
     pub fail_edits: AtomicBool,
+    /// Errors returned by the next uploads, one per upload (still recorded).
+    pub upload_errors: Mutex<VecDeque<TgError>>,
+    /// (chat, when, text) of every edit.
+    pub edit_log: Mutex<Vec<(i64, Instant, String)>>,
+}
+
+pub fn too_many(retry_after: u64) -> TgError {
+    TgError {
+        code: Some(429),
+        description: "Too Many Requests".into(),
+        retry_after: Some(retry_after),
+    }
 }
 
 impl FakeTg {
@@ -70,6 +83,12 @@ impl FakeTg {
     }
     fn new_id(&self) -> MessageId {
         100 + self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+    fn upload_result(&self) -> Result<(), TgError> {
+        match self.upload_errors.lock().unwrap().pop_front() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
     /// Texts of sent and edited messages, photo captions and answers.
     pub fn texts(&self) -> Vec<String> {
@@ -137,12 +156,10 @@ impl Telegram for FakeTg {
             text: text.into(),
             kb: kb.cloned(),
         });
+        let entry = (chat, Instant::now(), text.to_string());
+        self.edit_log.lock().unwrap().push(entry);
         if self.fail_edits.load(Ordering::SeqCst) {
-            return Err(TgError {
-                code: Some(429),
-                description: "Too Many Requests".into(),
-                retry_after: Some(3),
-            });
+            return Err(too_many(3));
         }
         Ok(())
     }
@@ -178,7 +195,7 @@ impl Telegram for FakeTg {
             caption: caption.into(),
             duration,
         });
-        Ok(())
+        self.upload_result()
     }
     async fn send_audio(
         &self,
@@ -196,7 +213,7 @@ impl Telegram for FakeTg {
             title: title.map(Into::into),
             performer: performer.map(Into::into),
         });
-        Ok(())
+        self.upload_result()
     }
     async fn answer_callback(&self, id: &str, text: Option<&str>) -> Result<(), TgError> {
         self.push(Call::Answer {
