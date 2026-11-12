@@ -38,7 +38,7 @@ fn sample(id: &str) -> Job {
 async fn insert_then_get_round_trips() {
     let store = Store::memory().await;
     let job = sample("j1");
-    store.insert(&job, "").await.unwrap();
+    store.insert(&job, "", "").await.unwrap();
     assert_eq!(store.get("j1").await.unwrap(), Some(job));
 
     let mut mp3 = sample("j2");
@@ -49,7 +49,7 @@ async fn insert_then_get_round_trips() {
     mp3.error = None;
     mp3.format_id = None;
     mp3.thumbnail = None;
-    store.insert(&mp3, "").await.unwrap();
+    store.insert(&mp3, "", "").await.unwrap();
     assert_eq!(store.get("j2").await.unwrap(), Some(mp3));
 }
 
@@ -58,7 +58,7 @@ async fn set_state_records_error() {
     let store = Store::memory().await;
     let mut job = sample("j1");
     job.error = None;
-    store.insert(&job, "").await.unwrap();
+    store.insert(&job, "", "").await.unwrap();
     let err = ApiError {
         code: ErrorCode::BotCheck,
         message: "m".into(),
@@ -86,7 +86,7 @@ async fn set_state_updates_file_info_and_finished_at() {
     job.filename = None;
     job.size = None;
     job.error = None;
-    store.insert(&job, "").await.unwrap();
+    store.insert(&job, "", "").await.unwrap();
     store
         .set_state("j1", JobState::Downloading, None, None, None)
         .await
@@ -106,7 +106,7 @@ async fn set_state_updates_file_info_and_finished_at() {
 #[tokio::test]
 async fn file_path_round_trips() {
     let store = Store::memory().await;
-    store.insert(&sample("j1"), "").await.unwrap();
+    store.insert(&sample("j1"), "", "").await.unwrap();
     assert_eq!(store.file_path("j1").await.unwrap(), None);
     store
         .set_file_path("j1", Path::new("/tmp/x.mp4"))
@@ -124,7 +124,7 @@ async fn open_creates_parent_dir_and_persists() {
     let path = dir.path().join("nested").join("reclip.db");
     {
         let store = Store::open(&path).await.unwrap();
-        store.insert(&sample("j1"), "").await.unwrap();
+        store.insert(&sample("j1"), "", "").await.unwrap();
     }
     let store = Store::open(&path).await.unwrap();
     assert!(store.get("j1").await.unwrap().is_some());
@@ -135,7 +135,7 @@ async fn set_state_none_clears_previous_error() {
     let store = Store::memory().await;
     let mut job = sample("j1");
     job.error = None;
-    store.insert(&job, "").await.unwrap();
+    store.insert(&job, "", "").await.unwrap();
     let err = ApiError {
         code: ErrorCode::BotCheck,
         message: "m".into(),
@@ -165,7 +165,7 @@ fn plain(id: &str, created_at: &str) -> Job {
 #[tokio::test]
 async fn insert_keeps_owner_format_id_and_thumbnail() {
     let store = Store::memory().await;
-    store.insert(&sample("j1"), "web:a").await.unwrap();
+    store.insert(&sample("j1"), "web:a", "").await.unwrap();
     let got = store.get("j1").await.unwrap().unwrap();
     assert_eq!(got.format_id.as_deref(), Some("137"));
     assert_eq!(got.thumbnail.as_deref(), Some("https://example.com/t.jpg"));
@@ -182,7 +182,7 @@ async fn insert_keeps_owner_format_id_and_thumbnail() {
 #[tokio::test]
 async fn get_owned_hides_other_owners() {
     let store = Store::memory().await;
-    store.insert(&sample("j1"), "web:a").await.unwrap();
+    store.insert(&sample("j1"), "web:a", "").await.unwrap();
     assert!(store.get_owned("j1", "web:a").await.unwrap().is_some());
     assert_eq!(store.get_owned("j1", "web:b").await.unwrap(), None);
 }
@@ -191,19 +191,19 @@ async fn get_owned_hides_other_owners() {
 async fn list_by_owner_newest_first_without_expired() {
     let store = Store::memory().await;
     store
-        .insert(&plain("a", "2026-11-11T10:00:00.000Z"), "web:a")
+        .insert(&plain("a", "2026-11-11T10:00:00.000Z"), "web:a", "")
         .await
         .unwrap();
     store
-        .insert(&plain("b", "2026-11-11T11:00:00.000Z"), "web:a")
+        .insert(&plain("b", "2026-11-11T11:00:00.000Z"), "web:a", "")
         .await
         .unwrap();
     store
-        .insert(&plain("c", "2026-11-11T12:00:00.000Z"), "web:a")
+        .insert(&plain("c", "2026-11-11T12:00:00.000Z"), "web:a", "")
         .await
         .unwrap();
     store
-        .insert(&plain("d", "2026-11-11T13:00:00.000Z"), "web:other")
+        .insert(&plain("d", "2026-11-11T13:00:00.000Z"), "web:other", "")
         .await
         .unwrap();
     store
@@ -222,16 +222,16 @@ async fn list_by_owner_newest_first_without_expired() {
 async fn queued_returns_jobs_with_owner_in_creation_order() {
     let store = Store::memory().await;
     store
-        .insert(&plain("late", "2026-11-11T12:00:00.000Z"), "web:b")
+        .insert(&plain("late", "2026-11-11T12:00:00.000Z"), "web:b", "")
         .await
         .unwrap();
     store
-        .insert(&plain("early", "2026-11-11T10:00:00.000Z"), "web:a")
+        .insert(&plain("early", "2026-11-11T10:00:00.000Z"), "web:a", "")
         .await
         .unwrap();
     let mut running = plain("run", "2026-11-11T11:00:00.000Z");
     running.state = JobState::Downloading;
-    store.insert(&running, "web:a").await.unwrap();
+    store.insert(&running, "web:a", "").await.unwrap();
     let q = store.queued().await.unwrap();
     let got: Vec<(String, String)> = q.into_iter().map(|(j, o)| (j.id, o)).collect();
     assert_eq!(
@@ -254,7 +254,7 @@ async fn mark_interrupted_fails_running_jobs() {
     ] {
         let mut j = plain(id, "2026-11-11T10:00:00.000Z");
         j.state = st;
-        store.insert(&j, "web:a").await.unwrap();
+        store.insert(&j, "web:a", "").await.unwrap();
     }
     let mut ids = store
         .mark_interrupted(Duration::from_secs(3600))
@@ -287,7 +287,7 @@ async fn expire_due_and_purge() {
     for id in ["old", "future", "noexp"] {
         let mut j = plain(id, "2026-11-11T10:00:00.000Z");
         j.state = JobState::Done;
-        store.insert(&j, "web:a").await.unwrap();
+        store.insert(&j, "web:a", "").await.unwrap();
         store
             .set_file_path(id, Path::new(&format!("/tmp/{id}.mp4")))
             .await
@@ -339,7 +339,7 @@ async fn expire_due_and_purge() {
 #[tokio::test]
 async fn delete_removes_row() {
     let store = Store::memory().await;
-    store.insert(&sample("j1"), "").await.unwrap();
+    store.insert(&sample("j1"), "", "").await.unwrap();
     store.delete("j1").await.unwrap();
     assert_eq!(store.get("j1").await.unwrap(), None);
 }
@@ -358,7 +358,7 @@ async fn set_state_unknown_id_errors() {
 async fn requeue_clears_finished_at() {
     let store = Store::memory().await;
     store
-        .insert(&plain("j1", "2026-11-11T10:00:00.000Z"), "")
+        .insert(&plain("j1", "2026-11-11T10:00:00.000Z"), "", "")
         .await
         .unwrap();
     store
@@ -377,7 +377,7 @@ async fn requeue_clears_finished_at() {
 async fn set_finished_stamps_expiry_from_finished_at() {
     let store = Store::memory().await;
     store
-        .insert(&plain("j1", "2026-11-11T10:00:00.000Z"), "web:a")
+        .insert(&plain("j1", "2026-11-11T10:00:00.000Z"), "web:a", "")
         .await
         .unwrap();
     let err = ApiError {
@@ -419,7 +419,7 @@ async fn expire_due_covers_failed_and_cancelled() {
     ] {
         let mut j = plain(id, "2026-11-11T10:00:00.000Z");
         j.state = state;
-        store.insert(&j, "web:a").await.unwrap();
+        store.insert(&j, "web:a", "").await.unwrap();
         store
             .set_expires_at(id, "2026-11-11T11:00:00.000Z")
             .await
@@ -465,7 +465,7 @@ async fn legacy_expiry_migration_makes_old_done_rows_due() {
         let mut j = plain(id, "2026-11-11T10:00:00.000Z");
         j.state = state;
         j.expires_at = expires_at.map(String::from);
-        store.insert(&j, "").await.unwrap();
+        store.insert(&j, "", "").await.unwrap();
     }
     // Phase-1 rows exist before 0003 runs: replay it over them.
     sqlx::query(include_str!("../../migrations/0003_legacy_expiry.sql"))

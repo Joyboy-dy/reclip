@@ -10,12 +10,14 @@ const TEXTS: Partial<Record<ErrorCode, string>> = {
   too_large: "File is too large to download",
   too_long: "Video is too long or is a live stream",
   cancelled: "Download cancelled",
-  rate_limited: "Too many requests — try again in a moment",
+  unauthorized: "This server requires an API key",
+  forbidden: "This action was refused",
+  forbidden_target: "This link points to a private address",
 };
 
 /** Map a server error code to a user-facing text. */
 export function friendlyError(code: ErrorCode | undefined, message: string): string {
-  if (code === "bot_check" || code === "invalid_request") return message;
+  if (code === "bot_check" || code === "invalid_request" || code === "rate_limited") return message;
   const text = code ? TEXTS[code] : undefined;
   if (text) return text;
   if (code === "internal") {

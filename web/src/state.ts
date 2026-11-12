@@ -19,6 +19,8 @@ export type Card = {
   speed?: number;
   eta?: number;
   jobState?: JobState;
+  /** Seconds the card waits before retrying a rate-limited job creation. */
+  waiting?: number;
 };
 
 const TERMINAL: JobState[] = ["done", "failed", "cancelled", "expired"];

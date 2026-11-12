@@ -104,9 +104,31 @@ pub struct JobList {
     pub jobs: Vec<Job>,
 }
 
+/// Limits of the visitor (`web`) tier. 0 means unlimited.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, TS)]
+pub struct PublicLimits {
+    pub probes_per_minute: u32,
+    pub jobs_per_hour: u32,
+    pub max_active: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
 pub struct PublicConfig {
     pub version: String,
     pub telegram_bot_username: Option<String>,
     pub playlist_limit: u32,
+    /// Whether the site works without an API key.
+    pub public_web: bool,
+    pub limits: PublicLimits,
+    /// Longest accepted media, in seconds.
+    #[ts(type = "number")]
+    pub max_duration: u64,
+}
+
+/// A signed, time-limited download link.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct LinkResponse {
+    pub url: String,
+    /// RFC 3339 timestamp.
+    pub expires_at: String,
 }

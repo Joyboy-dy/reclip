@@ -36,9 +36,9 @@ const width = (p: ProgressInfo): number =>
 const cls = (p: ProgressInfo): string =>
   "pbar" + (p.state === "queued" ? " queued" : p.state === "processing" ? " processing" : "");
 
-/** Thin accent bar plus a DM Mono status line. */
+/** Thin accent bar plus a DM Mono status line. The fill width is set via CSSOM by `updateProgressBar` once the markup is in the DOM (the CSP forbids inline styles). */
 export function progressBarHtml(p: ProgressInfo): string {
-  return `<div class="${cls(p)}"><div class="pbar-fill" style="width:${width(p)}%"></div></div><div class="pbar-text">${formatProgress(p)}</div>`;
+  return `<div class="${cls(p)}"><div class="pbar-fill"></div></div><div class="pbar-text">${formatProgress(p)}</div>`;
 }
 
 /** Update an already rendered bar in place (no flicker of the thumbnail). */

@@ -12,10 +12,10 @@ use axum::http::{HeaderName, HeaderValue};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{AppendHeaders, IntoResponse};
 use futures_util::stream::{self, Stream, StreamExt};
-use reclip_shared::{Job, JobState};
+use reclip_shared::{Job, JobState, Scope};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 
-use super::identity::Owner;
+use crate::access::caller::Caller;
 use crate::app::AppState;
 use crate::jobs::{JobManager, ManagerError};
 
@@ -75,14 +75,15 @@ fn updates(ctx: Ctx, first: Phase) -> impl Stream<Item = Result<Event, Infallibl
 
 pub async fn events(
     State(s): State<AppState>,
-    Owner(owner): Owner,
+    caller: Caller,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ManagerError> {
-    let sub = s.jobs.subscribe(&owner, &id).await?;
+    caller.require(Scope::JobsRead)?;
+    let sub = s.jobs.subscribe(&caller.owner, &id).await?;
     let stop = s.jobs.shutdown_token().cancelled_owned();
     let ctx = Ctx {
         jobs: s.jobs.clone(),
-        owner,
+        owner: caller.owner,
         id,
     };
     let body = updates(ctx, Phase::Snapshot(Box::new(sub.snapshot), sub.updates)).take_until(stop);

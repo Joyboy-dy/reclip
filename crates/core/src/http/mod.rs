@@ -1,10 +1,12 @@
 //! HTTP layer: error mapping and request helpers.
 
+pub mod admin;
 pub mod config;
 pub mod events;
 pub mod files;
-pub mod identity;
+pub mod headers;
 pub mod jobs;
+pub mod links;
 pub mod probe;
 
 use axum::Json;
@@ -55,6 +57,12 @@ pub fn not_found(message: &str) -> Response {
 
 pub async fn api_not_found() -> Response {
     not_found("Unknown API route")
+}
+
+impl From<HttpError> for ManagerError {
+    fn from(e: HttpError) -> Self {
+        ManagerError::Api(e.0)
+    }
 }
 
 impl IntoResponse for ManagerError {

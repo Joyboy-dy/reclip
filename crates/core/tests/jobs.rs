@@ -47,7 +47,7 @@ fn req(url: &str) -> CreateJobRequest {
 
 impl Env {
     async fn create(&self, url: &str) -> String {
-        let job = self.mgr.create(OWNER, req(url)).await.unwrap();
+        let job = self.mgr.create(OWNER, "", req(url)).await.unwrap();
         assert_eq!(job.state, JobState::Queued);
         assert_eq!(job.expires_at, None);
         job.id

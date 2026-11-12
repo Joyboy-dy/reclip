@@ -33,3 +33,13 @@ test("internal 403 and copyright errors get friendly texts", () => {
 test("too_long text mentions live streams", () => {
   expect(friendlyError("too_long", "raw")).toBe("Video is too long or is a live stream");
 });
+
+test("rate_limited keeps the server message", () => {
+  expect(friendlyError("rate_limited", "Try again in 12 s")).toBe("Try again in 12 s");
+});
+
+test("access error codes have friendly texts", () => {
+  expect(friendlyError("unauthorized", "raw")).toBe("This server requires an API key");
+  expect(friendlyError("forbidden", "raw")).toBe("This action was refused");
+  expect(friendlyError("forbidden_target", "raw")).toBe("This link points to a private address");
+});

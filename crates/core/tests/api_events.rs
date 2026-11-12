@@ -1,126 +1,24 @@
 //! Live job events (SSE), cancel and delete routes.
 
-use std::sync::Arc;
+mod common;
+
 use std::time::{Duration, Instant};
 
+use common::{Api, TestServer, Visitor};
 use futures_util::StreamExt;
-use reclip_core::app::{AppState, router, serve};
-use reclip_core::config::Config;
-use reclip_core::store::Store;
 use reclip_shared::{ErrorCode, JobState};
 use reqwest::Response;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-struct Server {
-    visitor: Visitor,
-    base: String,
-    downloads: std::path::PathBuf,
-    _dirs: (tempfile::TempDir, tempfile::TempDir),
+async fn start() -> TestServer {
+    TestServer::start(|_| {}).await
 }
 
-impl std::ops::Deref for Server {
-    type Target = Visitor;
-    fn deref(&self) -> &Visitor {
-        &self.visitor
-    }
-}
-
-/// One anonymous browser: its own cookie jar.
-struct Visitor {
-    base: String,
-    client: reqwest::Client,
-}
-
-async fn start() -> Server {
-    let downloads = tempfile::tempdir().unwrap();
-    let web = tempfile::tempdir().unwrap();
-    std::fs::write(web.path().join("index.html"), "<h1>ReClip</h1>").unwrap();
-    let mut cfg = Config::from_env(&|_| None);
-    cfg.ytdlp_bin = env!("CARGO_BIN_EXE_fake-ytdlp").to_string();
-    cfg.downloads_dir = downloads.path().to_path_buf();
-    cfg.web_dir = web.path().to_path_buf();
-    cfg.job_timeout = Duration::from_secs(60);
-    let dl = cfg.downloads_dir.clone();
-    let store = Store::memory().await;
-    let state = AppState::new(Arc::new(cfg), store);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
-    Server {
-        visitor: Visitor::new(&base),
-        base,
-        downloads: dl,
-        _dirs: (downloads, web),
-    }
-}
-
-impl Visitor {
-    fn new(base: &str) -> Visitor {
-        Visitor {
-            base: base.to_string(),
-            client: reqwest::Client::builder()
-                .cookie_store(true)
-                .build()
-                .unwrap(),
-        }
-    }
-    async fn get(&self, path: &str) -> Response {
-        self.client
-            .get(format!("{}{path}", self.base))
-            .send()
-            .await
-            .unwrap()
-    }
-    async fn post(&self, path: &str, body: Value) -> Response {
-        self.client
-            .post(format!("{}{path}", self.base))
-            .json(&body)
-            .send()
-            .await
-            .unwrap()
-    }
-    async fn delete(&self, path: &str) -> Response {
-        self.client
-            .delete(format!("{}{path}", self.base))
-            .send()
-            .await
-            .unwrap()
-    }
-    async fn create(&self, url: &str) -> String {
-        let r = self
-            .post("/api/v1/jobs", json!({"url": url, "format": "mp4"}))
-            .await;
-        assert_eq!(r.status(), 202);
-        r.json::<Value>().await.unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-    async fn cancel(&self, id: &str) -> Response {
-        self.post(&format!("/api/v1/jobs/{id}/cancel"), json!({}))
-            .await
-    }
-    async fn wait_state(&self, id: &str, want: &str) -> Value {
-        let end = Instant::now() + Duration::from_secs(20);
-        while Instant::now() < end {
-            let j: Value = self
-                .get(&format!("/api/v1/jobs/{id}"))
-                .await
-                .json()
-                .await
-                .unwrap();
-            if j["state"] == want {
-                return j;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        panic!("job never reached {want}");
-    }
-    async fn events(&self, id: &str) -> Events {
-        let r = self.get(&format!("/api/v1/jobs/{id}/events")).await;
-        assert_eq!(r.status(), 200);
-        Events::new(r)
-    }
+/// Open the job's event stream (asserting 200).
+async fn events(v: &Api, id: &str) -> Events {
+    let r = v.get(&format!("/api/v1/jobs/{id}/events")).await;
+    assert_eq!(r.status(), 200);
+    Events::new(r)
 }
 
 type ByteStream =
@@ -209,8 +107,8 @@ async fn events_stream_snapshot_then_done() {
 async fn events_for_finished_job_send_one_and_close() {
     let s = start().await;
     let id = s.create("https://ok.example/v").await;
-    s.wait_state(&id, "done").await;
-    let evs = s.events(&id).await.all().await;
+    s.wait_job(&id, "done").await;
+    let evs = events(&s, &id).await.all().await;
     assert_eq!(evs.len(), 1);
     assert_eq!(evs[0]["state"], "done");
 }
@@ -219,8 +117,8 @@ async fn events_for_finished_job_send_one_and_close() {
 async fn two_subscribers_see_cancellation() {
     let s = start().await;
     let id = s.create("https://slow.example/v").await;
-    let mut a = s.events(&id).await;
-    let mut b = s.events(&id).await;
+    let mut a = events(&s, &id).await;
+    let mut b = events(&s, &id).await;
     assert!(a.next().await.is_some());
     assert!(b.next().await.is_some());
     assert_eq!(s.cancel(&id).await.status(), 200);
@@ -233,9 +131,9 @@ async fn two_subscribers_see_cancellation() {
 async fn reconnect_starts_with_current_snapshot() {
     let s = start().await;
     let id = s.create("https://slow.example/v").await;
-    drop(s.events(&id).await);
-    s.wait_state(&id, "downloading").await;
-    let first = s.events(&id).await.next().await.unwrap();
+    drop(events(&s, &id).await);
+    s.wait_job(&id, "downloading").await;
+    let first = events(&s, &id).await.next().await.unwrap();
     assert_eq!(first["state"], "downloading");
     s.cancel(&id).await;
 }
@@ -244,14 +142,14 @@ async fn reconnect_starts_with_current_snapshot() {
 async fn cancel_is_idempotent() {
     let s = start().await;
     let id = s.create("https://slow.example/v").await;
-    s.wait_state(&id, "downloading").await;
+    s.wait_job(&id, "downloading").await;
     for _ in 0..2 {
         let r = s.cancel(&id).await;
         assert_eq!(r.status(), 200);
         assert_eq!(r.json::<Value>().await.unwrap()["state"], "cancelled");
     }
     let done = s.create("https://ok.example/v").await;
-    s.wait_state(&done, "done").await;
+    s.wait_job(&done, "done").await;
     let r = s.cancel(&done).await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.json::<Value>().await.unwrap()["state"], "done");
@@ -261,7 +159,7 @@ async fn cancel_is_idempotent() {
 async fn delete_removes_job_and_file() {
     let s = start().await;
     let id = s.create("https://ok.example/v").await;
-    s.wait_state(&id, "done").await;
+    s.wait_job(&id, "done").await;
     assert!(s.downloads.join(&id).exists());
     let r = s.delete(&format!("/api/v1/jobs/{id}")).await;
     assert_eq!(r.status(), 204);
@@ -292,34 +190,21 @@ async fn api_responses_are_not_cached() {
 
 #[tokio::test]
 async fn shutdown_ends_open_event_streams() {
-    let downloads = tempfile::tempdir().unwrap();
-    let web = tempfile::tempdir().unwrap();
-    let mut cfg = Config::from_env(&|_| None);
-    cfg.ytdlp_bin = env!("CARGO_BIN_EXE_fake-ytdlp").to_string();
-    cfg.downloads_dir = downloads.path().to_path_buf();
-    cfg.web_dir = web.path().to_path_buf();
-    cfg.job_timeout = Duration::from_secs(60);
-    // One slot: the second job stays queued, and only the shutdown can end
-    // its stream (no worker will ever publish a terminal state for it).
-    cfg.max_concurrent = 1;
-    let store = Store::memory().await;
-    let state = AppState::new(Arc::new(cfg), store.clone());
-    let jobs = state.jobs.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let signal = async move {
         let _ = stopped.await;
     };
-    let server = tokio::spawn(serve(listener, router(state), jobs, signal));
+    // One slot: the second job stays queued, and only the shutdown can end
+    // its stream (no worker will ever publish a terminal state for it).
+    let (s, server) = TestServer::start_until(|c| c.max_concurrent = 1, signal).await;
 
-    let v = Visitor::new(&base);
+    let v = Visitor::new(&s.base);
     let id = v.create("https://slow.example/v").await;
-    v.wait_state(&id, "downloading").await;
+    v.wait_job(&id, "downloading").await;
     let queued = v.create("https://slow.example/q").await;
-    let mut events = v.events(&id).await;
-    assert!(events.next().await.is_some());
-    let mut waiting = v.events(&queued).await;
+    let mut running = events(&v, &id).await;
+    assert!(running.next().await.is_some());
+    let mut waiting = events(&v, &queued).await;
     assert_eq!(waiting.next().await.unwrap()["state"], "queued");
 
     stop.send(()).unwrap();
@@ -329,11 +214,11 @@ async fn shutdown_ends_open_event_streams() {
         .unwrap()
         .unwrap();
     // Both streams were ended by the server, not left hanging.
-    events.all().await;
+    running.all().await;
     waiting.all().await;
-    let job = store.get(&id).await.unwrap().unwrap();
+    let job = s.store.get(&id).await.unwrap().unwrap();
     assert_eq!(job.state, JobState::Failed);
     assert_eq!(job.error.unwrap().code, ErrorCode::Interrupted);
-    let queued = store.get(&queued).await.unwrap().unwrap();
+    let queued = s.store.get(&queued).await.unwrap().unwrap();
     assert_eq!(queued.state, JobState::Queued);
 }

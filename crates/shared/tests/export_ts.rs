@@ -27,7 +27,15 @@ fn generate() -> String {
         decl::<CreateJobRequest>(&cfg),
         decl::<Job>(&cfg),
         decl::<JobList>(&cfg),
+        decl::<PublicLimits>(&cfg),
         decl::<PublicConfig>(&cfg),
+        decl::<LinkResponse>(&cfg),
+        decl::<Scope>(&cfg),
+        decl::<KeyLimits>(&cfg),
+        decl::<CreateKeyRequest>(&cfg),
+        decl::<ApiKeyInfo>(&cfg),
+        decl::<CreatedKey>(&cfg),
+        decl::<ApiKeyList>(&cfg),
     ] {
         out.push('\n');
         out.push_str(&d);

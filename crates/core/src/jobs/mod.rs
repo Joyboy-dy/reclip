@@ -110,8 +110,13 @@ impl JobManager {
         &self.inner.hub
     }
 
-    /// Store a new `queued` job for `owner` and schedule it.
-    pub async fn create(&self, owner: &str, req: CreateJobRequest) -> Result<Job, ApiError> {
+    /// Store a new `queued` job for `owner`, counted against `quota_key`, and schedule it.
+    pub async fn create(
+        &self,
+        owner: &str,
+        quota_key: &str,
+        req: CreateJobRequest,
+    ) -> Result<Job, ApiError> {
         let job = Job {
             id: uuid::Uuid::now_v7().simple().to_string(),
             url: req.url,
@@ -129,7 +134,10 @@ impl JobManager {
             created_at: crate::store::now(),
             expires_at: None,
         };
-        self.store().insert(&job, owner).await.map_err(internal)?;
+        self.store()
+            .insert(&job, owner, quota_key)
+            .await
+            .map_err(internal)?;
         self.enqueue(job.clone(), owner);
         Ok(job)
     }

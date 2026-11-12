@@ -2,12 +2,12 @@ use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use reclip_shared::JobState;
+use reclip_shared::{Job, JobState, Scope};
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-use super::identity::Owner;
 use super::{internal, not_found};
+use crate::access::caller::Caller;
 use crate::app::AppState;
 
 /// RFC 5987 attr-char: everything else is percent-encoded.
@@ -42,16 +42,25 @@ pub fn content_disposition(filename: &str) -> String {
 
 pub async fn download(
     State(s): State<AppState>,
-    Owner(owner): Owner,
+    caller: Caller,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
-    let job = match s.store.get_owned(&id, &owner).await {
+    if let Err(e) = caller.require(Scope::JobsRead) {
+        return e.into_response();
+    }
+    let job = match s.store.get_owned(&id, &caller.owner).await {
         Ok(Some(j)) if j.state == JobState::Done => j,
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),
     };
-    let path = match s.store.file_path(&id).await {
+    serve_job_file(&s, job, req).await
+}
+
+/// Stream a finished job's file (with `Range` support) as an attachment;
+/// 404 when the file is gone from disk.
+pub async fn serve_job_file(s: &AppState, job: Job, req: Request) -> Response {
+    let path = match s.store.file_path(&job.id).await {
         Ok(Some(p)) if p.is_file() => p,
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),

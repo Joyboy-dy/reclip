@@ -1,12 +1,19 @@
 //! Router assembly and shared state.
 
 use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::routing::{any, get, post};
 use axum::{Router, middleware};
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::access::caller::caller_layer;
+use crate::access::key_usage::KeyUsage;
+use crate::access::limits::Limiter;
+use crate::access::quota::AdmissionLocks;
+use crate::access::secrets::Site;
+use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
 use crate::http;
 use crate::jobs::JobManager;
@@ -17,12 +24,30 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub store: Store,
     pub jobs: JobManager,
+    pub limiter: Limiter,
+    /// Serializes job admission per quota key (active-jobs cap).
+    pub admission: AdmissionLocks,
+    /// Coalesces the `last_used_at` / `request_count` writes of API keys.
+    pub key_usage: KeyUsage,
+    /// Admin token, link key and public URL.
+    pub site: Site,
+    /// DNS resolver used by the SSRF guard; tests swap in a static one.
+    pub resolver: Resolver,
 }
 
 impl AppState {
-    pub fn new(cfg: Arc<Config>, store: Store) -> AppState {
+    pub fn new(cfg: Arc<Config>, store: Store, site: Site) -> AppState {
         let jobs = JobManager::new(cfg.clone(), store.clone());
-        AppState { cfg, store, jobs }
+        AppState {
+            cfg,
+            store,
+            jobs,
+            limiter: Limiter::new(),
+            admission: AdmissionLocks::default(),
+            key_usage: KeyUsage::default(),
+            site,
+            resolver: system_resolver(),
+        }
     }
 }
 
@@ -43,13 +68,18 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/events", get(http::events::events))
         .route("/api/v1/jobs/{id}/cancel", post(http::jobs::cancel))
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
+        .route("/api/v1/jobs/{id}/link", post(http::links::create))
         .route("/api/{*rest}", any(http::api_not_found))
-        .layer(middleware::from_fn(http::identity::identity_layer));
-    Router::new()
+        .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
+    // Admin routes carry their own token check, outside `caller_layer`.
+    let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/d/{token}", get(http::links::redeem))
+        .merge(http::admin::routes(state.clone()))
         .merge(api)
         .fallback_service(web)
-        .with_state(state)
+        .with_state(state);
+    http::headers::with_security_headers(app)
 }
 
 /// Serve `app` until `signal` fires, then shut down in the order that lets
@@ -65,6 +95,7 @@ pub async fn serve(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
     let stop = jobs.clone();
+    let app = app.into_make_service_with_connect_info::<SocketAddr>();
     let res = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             signal.await;

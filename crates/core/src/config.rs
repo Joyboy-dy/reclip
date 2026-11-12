@@ -1,7 +1,31 @@
 //! Runtime configuration read from environment variables.
 
+use ipnet::IpNet;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use crate::access::origin::bare_origin;
+
+/// A secret string whose `Debug` output never shows the value.
+#[derive(Clone)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Secret {
+        Secret(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -27,9 +51,74 @@ pub struct Config {
     pub file_ttl: Duration,
     /// Period of the expiry sweep.
     pub cleanup_interval: Duration,
+    /// Peers allowed to set `X-Forwarded-*` headers.
+    pub trusted_proxies: Vec<IpNet>,
+    /// Public origin (`https://host[:port]`), validated at load.
+    pub public_url: Option<String>,
+    /// `RECLIP_ADMIN_TOKEN`; when unset one is generated (see `Site::load`).
+    pub admin_token: Option<Secret>,
+    /// Whether the web UI is open without an API key.
+    pub public_web: bool,
+    /// How long a signed download link stays valid.
+    pub link_ttl: Duration,
+    pub limits: TierLimits,
+}
+
+/// Rate limits for one access tier. 0 means unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub probes_per_minute: u32,
+    pub jobs_per_hour: u32,
+    pub max_active: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TierLimits {
+    pub web: Limits,
+    pub key: Limits,
+    pub tg: Limits,
+}
+
+const DEFAULT_PROXIES: &str =
+    "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7";
+
+/// Parse a comma-separated list of CIDRs or bare addresses; bad entries are skipped.
+fn parse_proxies(list: &str) -> Vec<IpNet> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .filter_map(|e| {
+            let net = e
+                .parse::<IpNet>()
+                .ok()
+                .or_else(|| e.parse::<IpAddr>().ok().map(IpNet::from));
+            if net.is_none() {
+                tracing::warn!(entry = e, "ignoring invalid RECLIP_TRUSTED_PROXIES entry");
+            }
+            net
+        })
+        .collect()
+}
+
+/// `RECLIP_PUBLIC_URL` as a normalized origin (`https://host[:port]`). A
+/// path, query, fragment, credentials or another scheme make it ignored.
+fn public_origin(raw: &str) -> Option<String> {
+    let origin = bare_origin(raw);
+    if origin.is_none() {
+        tracing::warn!(
+            value = raw,
+            "RECLIP_PUBLIC_URL ignored: must be like https://reclip.example.com"
+        );
+    }
+    origin
 }
 
 impl Config {
+    /// The SQLite database, shared by the server and the `keys` command.
+    pub fn db_path(&self) -> PathBuf {
+        self.data_dir.join("reclip.db")
+    }
+
     /// Build the config from an environment lookup. Empty values count as unset.
     pub fn from_env(env: &dyn Fn(&str) -> Option<String>) -> Config {
         let get = |k: &str| {
@@ -44,6 +133,22 @@ impl Config {
                 .unwrap_or(default)
                 .max(1)
         };
+
+        let limit = |tier: &str, d: (u32, u32, u32)| {
+            let n = |what: &str, default: u32| {
+                get(&format!("RECLIP_LIMIT_{tier}_{what}"))
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(default)
+            };
+            Limits {
+                probes_per_minute: n("PROBES_PER_MIN", d.0),
+                jobs_per_hour: n("JOBS_PER_HOUR", d.1),
+                max_active: n("ACTIVE", d.2),
+            }
+        };
+        let public_web = get("RECLIP_PUBLIC_WEB")
+            .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no"))
+            .unwrap_or(true);
 
         let data_dir = get("RECLIP_DATA_DIR")
             .map(PathBuf::from)
@@ -78,56 +183,22 @@ impl Config {
             max_per_site: slots("RECLIP_MAX_PER_SITE", 2),
             file_ttl: Duration::from_secs(num("RECLIP_FILE_TTL").unwrap_or(86400)),
             cleanup_interval: Duration::from_secs(num("RECLIP_CLEANUP_INTERVAL").unwrap_or(600)),
+            trusted_proxies: parse_proxies(
+                &get("RECLIP_TRUSTED_PROXIES").unwrap_or_else(|| DEFAULT_PROXIES.into()),
+            ),
+            public_url: get("RECLIP_PUBLIC_URL").and_then(|u| public_origin(&u)),
+            admin_token: get("RECLIP_ADMIN_TOKEN").map(Secret),
+            public_web,
+            link_ttl: Duration::from_secs(num("RECLIP_LINK_TTL").unwrap_or(21600)),
+            limits: TierLimits {
+                web: limit("WEB", (120, 300, 200)),
+                key: limit("KEY", (120, 200, 100)),
+                tg: limit("TG", (30, 40, 10)),
+            },
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn config_defaults_and_overrides() {
-        let c = Config::from_env(&|_| None);
-        assert_eq!(
-            (c.port, c.playlist_limit, c.job_timeout.as_secs()),
-            (8899, 50, 1800)
-        );
-        assert_eq!((c.max_filesize.as_str(), c.max_duration), ("2G", 10800));
-        assert_eq!(c.downloads_dir, PathBuf::from("./data").join("downloads"));
-        let c = Config::from_env(&|k| (k == "RECLIP_PORT").then(|| "9000".into()));
-        assert_eq!(c.port, 9000);
-        let c = Config::from_env(&|k| (k == "PORT").then(|| "9100".into()));
-        assert_eq!(c.port, 9100);
-        let c = Config::from_env(&|k| (k == "RECLIP_PROXY").then(|| "".into()));
-        assert_eq!(c.proxy, None);
-    }
-
-    #[test]
-    fn queue_and_lifecycle_settings() {
-        let c = Config::from_env(&|_| None);
-        assert_eq!((c.max_concurrent, c.max_per_site), (4, 2));
-        assert_eq!(c.file_ttl, Duration::from_secs(86400));
-        assert_eq!(c.cleanup_interval, Duration::from_secs(600));
-        let env = |k: &str| match k {
-            "RECLIP_MAX_CONCURRENT" => Some("8".into()),
-            "RECLIP_MAX_PER_SITE" => Some("3".into()),
-            "RECLIP_FILE_TTL" => Some("60".into()),
-            "RECLIP_CLEANUP_INTERVAL" => Some("5".into()),
-            _ => None,
-        };
-        let c = Config::from_env(&env);
-        assert_eq!((c.max_concurrent, c.max_per_site), (8, 3));
-        assert_eq!(c.file_ttl, Duration::from_secs(60));
-        assert_eq!(c.cleanup_interval, Duration::from_secs(5));
-        // Zero would stall the queue forever: at least one slot each.
-        let c = Config::from_env(&|k| k.starts_with("RECLIP_MAX_").then(|| "0".into()));
-        assert_eq!((c.max_concurrent, c.max_per_site), (1, 1));
-    }
-
-    #[test]
-    fn downloads_dir_follows_data_dir() {
-        let c = Config::from_env(&|k| (k == "RECLIP_DATA_DIR").then(|| "/srv/r".into()));
-        assert_eq!(c.downloads_dir, PathBuf::from("/srv/r").join("downloads"));
-    }
-}
+#[path = "config_tests.rs"]
+mod tests;

@@ -16,6 +16,8 @@ pub enum ErrorCode {
     Cancelled,
     RateLimited,
     ForbiddenTarget,
+    Unauthorized,
+    Forbidden,
     InvalidRequest,
     Internal,
 }
@@ -25,7 +27,8 @@ impl ErrorCode {
     pub fn http_status(&self) -> u16 {
         match self {
             Self::InvalidRequest | Self::UnsupportedUrl => 400,
-            Self::ForbiddenTarget => 403,
+            Self::Unauthorized => 401,
+            Self::ForbiddenTarget | Self::Forbidden => 403,
             Self::RateLimited => 429,
             Self::Internal => 500,
             _ => 422,
