@@ -108,7 +108,6 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip());
     let mut fwd = forwarded(peer, &parts.headers, &s.cfg.trusted_proxies);
-    s.site.learn(&s.store, &fwd).await;
     if fwd.host.is_none() {
         // HTTP/2 carries the host in the `:authority` pseudo-header.
         fwd.host = parts.uri.authority().map(|a| a.to_string());
@@ -116,6 +115,8 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
     let mut res = match resolve(&s, &parts, &fwd).await {
         Err(res) => res,
         Ok((caller, minted)) => {
+            // Only accepted requests may teach the public URL.
+            s.site.learn(&s.store, &fwd).await;
             let https = fwd.https;
             parts.extensions.insert(fwd);
             parts.extensions.insert(caller);

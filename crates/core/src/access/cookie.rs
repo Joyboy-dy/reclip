@@ -63,7 +63,8 @@ pub fn visitor_caller(
         return Err(Box::new(unauthorized("An API key is required")));
     }
     let safe = matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
-    if !safe && !same_origin(&parts.headers, fwd, s.site.public_url().as_deref()) {
+    // The configured URL only: a learned one is never trusted as an Origin.
+    if !safe && !same_origin(&parts.headers, fwd, s.cfg.public_url.as_deref()) {
         return Err(Box::new(error(
             ErrorCode::Forbidden,
             "Cross-site request refused",

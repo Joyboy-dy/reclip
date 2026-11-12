@@ -33,7 +33,7 @@ pub fn bare_origin(raw: &str) -> Option<String> {
 
 /// Whether the `Origin` header names this site: same scheme and authority
 /// as the request (`https` only when a trusted proxy says so) or as the
-/// public URL. Missing, `null` or unparseable origins are refused.
+/// configured public URL. Missing, `null` or unparseable origins are refused.
 pub fn same_origin(headers: &HeaderMap, fwd: &Forwarded, public_url: Option<&str>) -> bool {
     let Some(origin) = headers
         .get(ORIGIN)

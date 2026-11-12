@@ -132,33 +132,49 @@ async fn config_exposes_limits() {
     );
 }
 
-#[tokio::test]
-async fn learned_public_url_is_a_valid_origin() {
-    let s = TestServer::start(|_| {}).await;
-    let job = json!({"url": "https://ok", "format": "mp4"});
-    let visitor = Visitor::with_origin(&s.base, "https://r.example");
-    let r = visitor.post("/api/v1/jobs", job.clone()).await;
-    expect_error(r, 403, "forbidden").await;
-    assert_eq!(s.site.public_url(), None);
-
-    // The trusted proxy (127.0.0.1 here) forwards the public origin.
-    let r = s
-        .client
-        .get(format!("{}/api/v1/config", s.base))
+/// A GET sent through the trusted proxy (127.0.0.1 here) for `r.example`.
+async fn proxied_get(api: &common::Api, path: &str) -> Response {
+    api.client
+        .get(format!("{}{path}", api.base))
         .header("x-forwarded-proto", "https")
         .header("x-forwarded-host", "r.example")
         .send()
         .await
-        .unwrap();
-    assert_eq!(r.status(), 200);
+        .unwrap()
+}
+
+#[tokio::test]
+async fn learned_public_url_is_not_an_origin() {
+    let s = TestServer::start(|_| {}).await;
+    assert_eq!(proxied_get(&s, "/api/v1/config").await.status(), 200);
     assert_eq!(s.site.public_url().as_deref(), Some("https://r.example"));
     let stored = s.store.setting("public_url").await.unwrap();
     assert_eq!(stored.as_deref(), Some("https://r.example"));
 
+    let job = json!({"url": "https://ok", "format": "mp4"});
+    let foreign = Visitor::with_origin(&s.base, "https://r.example");
+    let r = foreign.post("/api/v1/jobs", job.clone()).await;
+    expect_error(r, 403, "forbidden").await;
+    // The request's own origin (Host match) still works.
+    assert_eq!(s.post("/api/v1/jobs", job).await.status(), 202);
+}
+
+#[tokio::test]
+async fn rejected_requests_learn_nothing() {
+    let s = TestServer::start(|c| c.public_web = false).await;
+    let bad_key = Agent::new(&s.base, &format!("rck_nosuchid_{}", "z".repeat(43)));
+    for api in [&**s, &*bad_key, &*s.admin()] {
+        let r = proxied_get(api, "/api/v1/jobs").await;
+        expect_error(r, 401, "unauthorized").await;
+    }
+    // Admin routes are outside the caller layer: they never learn either.
     assert_eq!(
-        visitor.post("/api/v1/jobs", job.clone()).await.status(),
-        202
+        proxied_get(&s.admin(), "/api/v1/admin/keys").await.status(),
+        200
     );
-    let http = Visitor::with_origin(&s.base, "http://r.example");
-    expect_error(http.post("/api/v1/jobs", job).await, 403, "forbidden").await;
+    assert_eq!(s.site.public_url(), None);
+    assert_eq!(s.store.setting("public_url").await.unwrap(), None);
+    // The open config route establishes a visitor even in private mode.
+    assert_eq!(proxied_get(&s, "/api/v1/config").await.status(), 200);
+    assert_eq!(s.site.public_url().as_deref(), Some("https://r.example"));
 }

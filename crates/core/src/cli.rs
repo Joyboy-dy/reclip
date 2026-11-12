@@ -1,4 +1,5 @@
-//! `reclip-core keys ...`: manage API keys from inside the container.
+//! `reclip-core keys ...` and `reclip-core url ...`: manage API keys and
+//! the learned public URL from inside the container.
 //!
 //! Exit codes: 0 done, 1 failure, 2 usage error.
 
@@ -9,10 +10,14 @@ use crate::access::keys::create_key;
 use crate::config::Config;
 use crate::store::Store;
 
+mod url;
+
 const USAGE: &str = "usage:
   reclip-core keys create --name <name> [--scopes a,b] [--unlimited] [--expires-days N]
   reclip-core keys list
   reclip-core keys revoke <id>
+  reclip-core url show
+  reclip-core url reset
 scopes: probe, jobs:create, jobs:read, jobs:cancel, delegate";
 
 #[derive(Debug)]
@@ -20,10 +25,11 @@ enum Command {
     Create(CreateKeyRequest),
     List,
     Revoke(String),
+    Url(url::UrlCommand),
 }
 
-/// Run a `keys` subcommand and return its exit code, or `None` when `args`
-/// (without the program name) are not a `keys` command.
+/// Run a `keys` or `url` subcommand and return its exit code, or `None`
+/// when `args` (without the program name) are neither.
 pub async fn run(args: &[String]) -> anyhow::Result<Option<i32>> {
     let cmd = match parse(args) {
         None => return Ok(None),
@@ -40,11 +46,12 @@ pub async fn run(args: &[String]) -> anyhow::Result<Option<i32>> {
         .try_init();
     let cfg = Config::from_env(&|k| std::env::var(k).ok());
     let store = Store::open(&cfg.db_path()).await?;
-    Ok(Some(execute(&store, cmd).await?))
+    Ok(Some(execute(&cfg, &store, cmd).await?))
 }
 
-async fn execute(store: &Store, cmd: Command) -> anyhow::Result<i32> {
+async fn execute(cfg: &Config, store: &Store, cmd: Command) -> anyhow::Result<i32> {
     match cmd {
+        Command::Url(cmd) => url::execute(cfg, store, cmd).await,
         Command::Create(req) => match create_key(store, req).await {
             Ok(created) => {
                 println!("{}", created.key);
@@ -112,20 +119,26 @@ fn scope_name(s: Scope) -> &'static str {
     SCOPES.iter().find(|(_, v)| *v == s).map_or("?", |(n, _)| n)
 }
 
-/// `None` unless `args[0]` is `keys`; then the command or a usage error.
+/// `None` unless `args[0]` is `keys` or `url`; then the command or a usage
+/// error.
 fn parse(args: &[String]) -> Option<Result<Command, String>> {
     let (first, rest) = args.split_first()?;
-    if first != "keys" {
-        return None;
-    }
     let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
-    Some(match rest.as_slice() {
+    match first.as_str() {
+        "keys" => Some(parse_keys(&rest)),
+        "url" => Some(url::parse(&rest).map(Command::Url)),
+        _ => None,
+    }
+}
+
+fn parse_keys(rest: &[&str]) -> Result<Command, String> {
+    match rest {
         ["create", flags @ ..] => parse_create(flags).map(Command::Create),
         ["list"] => Ok(Command::List),
         ["revoke", id] => Ok(Command::Revoke(id.to_string())),
         [] => Err("missing keys subcommand".into()),
         [other, ..] => Err(format!("unexpected arguments after keys: {other}")),
-    })
+    }
 }
 
 fn parse_create(mut flags: &[&str]) -> Result<CreateKeyRequest, String> {
@@ -244,6 +257,11 @@ mod tests {
         assert!(parse(&args(&[])).is_none());
         assert!(parse(&args(&["serve"])).is_none());
         assert!(parse(&args(&["healthcheck"])).is_none());
+        assert!(matches!(
+            parse(&args(&["url", "show"])),
+            Some(Ok(Command::Url(url::UrlCommand::Show)))
+        ));
+        assert!(matches!(parse(&args(&["url"])), Some(Err(_))));
         assert_eq!(run(&args(&["serve"])).await.unwrap(), None);
     }
 }

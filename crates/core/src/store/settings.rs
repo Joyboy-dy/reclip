@@ -26,6 +26,15 @@ impl Store {
         Ok(())
     }
 
+    /// Remove `k`. Returns whether it was set.
+    pub async fn delete_setting(&self, k: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(k)
+            .execute(&self.0)
+            .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
     /// Store `v` only when `k` is unset. Returns whether this call wrote it.
     pub async fn set_setting_if_absent(&self, k: &str, v: &str) -> Result<bool> {
         let res =

@@ -1,5 +1,8 @@
 //! Server secrets and the public address: the admin token, the link-signing
 //! key, and the site's public URL (configured, stored or learned).
+//!
+//! A learned URL is only used to build absolute links; it is never trusted
+//! as an `Origin` (a misrouted first request could have planted it).
 
 use std::sync::{Arc, RwLock};
 
@@ -14,9 +17,12 @@ use crate::store::Store;
 /// Settings keys.
 const ADMIN_HASH: &str = "admin_token_sha256";
 const LINK_KEY: &str = "link_key";
-const PUBLIC_URL: &str = "public_url";
+/// Settings key of the learned public URL (`reclip-core url reset` clears it).
+pub const PUBLIC_URL: &str = "public_url";
 const ADMIN_PREFIX: &str = "rca_";
 const ADMIN_SECRET_LEN: usize = 43;
+/// Shorter `RECLIP_ADMIN_TOKEN` values get a startup warning.
+const MIN_ADMIN_TOKEN_CHARS: usize = 32;
 
 /// Instance secrets and public address. Cheap to clone; no `Debug` on
 /// purpose (it holds the link key).
@@ -34,7 +40,14 @@ impl Site {
     /// else the stored one, else none until a proxy reveals it.
     pub async fn load(cfg: &Config, store: &Store) -> anyhow::Result<Site> {
         let admin_hash = match &cfg.admin_token {
-            Some(token) => sha256_hex(token.expose()),
+            Some(token) => {
+                if is_short(token.expose()) {
+                    tracing::warn!(
+                        "RECLIP_ADMIN_TOKEN is short; use at least 32 random characters"
+                    );
+                }
+                sha256_hex(token.expose())
+            }
             None => stored_admin_hash(store).await?,
         };
         let public_url = match &cfg.public_url {
@@ -62,6 +75,7 @@ impl Site {
 
     /// Remember the public origin a trusted proxy forwards, the first time
     /// one does and only when no address is known. A read lock otherwise.
+    /// Call it only for requests whose caller was accepted.
     pub async fn learn(&self, store: &Store, fwd: &Forwarded) {
         let known = || {
             let url = self.public_url.read().unwrap_or_else(|e| e.into_inner());
@@ -85,7 +99,7 @@ impl Site {
             }
             *known = Some(url.clone());
         }
-        tracing::info!(public_url = %url, "learned public url from the reverse proxy");
+        tracing::warn!("learned public URL {url}; set RECLIP_PUBLIC_URL to pin it");
         if let Err(e) = store.set_setting_if_absent(PUBLIC_URL, &url).await {
             tracing::warn!(error = %e, "failed to store the public url");
         }
@@ -101,6 +115,8 @@ async fn stored_admin_hash(store: &Store) -> anyhow::Result<String> {
     let hash = sha256_hex(&token);
     if store.set_setting_if_absent(ADMIN_HASH, &hash).await? {
         tracing::warn!("admin token (shown once, store it now): {token}");
+        // Also on stderr, so a silenced log (RUST_LOG=off) cannot lose it.
+        eprintln!("admin token (shown once, store it now): {token}");
         return Ok(hash);
     }
     // Another process stored one first: use it, never show ours.
@@ -122,6 +138,10 @@ async fn link_key(store: &Store) -> anyhow::Result<[u8; 32]> {
         Some(key) => Ok(key),
         None => bail!("setting {LINK_KEY} is not 64 hex characters"),
     }
+}
+
+fn is_short(token: &str) -> bool {
+    token.chars().count() < MIN_ADMIN_TOKEN_CHARS
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -176,6 +196,13 @@ mod tests {
         assert!(site.is_admin("rca_from_env"));
         assert!(!site.is_admin("rca_from_envx"));
         assert_eq!(store.setting(ADMIN_HASH).await.unwrap(), None);
+    }
+
+    #[test]
+    fn short_admin_token_detected() {
+        assert!(is_short("rca_test-admin-token"));
+        assert!(!is_short(&"x".repeat(32)));
+        assert!(is_short(&"é".repeat(31)));
     }
 
     #[tokio::test]
