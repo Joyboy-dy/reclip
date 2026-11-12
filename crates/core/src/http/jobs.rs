@@ -8,6 +8,7 @@ use super::{ApiJson, HttpError, validate_url};
 use crate::access::caller::Caller;
 use crate::access::limits::RateInfo;
 use crate::access::quota::check_create;
+use crate::access::ssrf::check_target;
 use crate::app::AppState;
 use crate::jobs::ManagerError;
 
@@ -20,6 +21,9 @@ pub async fn create(
     caller
         .require(Scope::JobsCreate)
         .map_err(IntoResponse::into_response)?;
+    check_target(&req.url, &s.resolver)
+        .await
+        .map_err(|e| HttpError(e).into_response())?;
     let rate = check_create(&s, &caller).await?;
     let job = s
         .jobs

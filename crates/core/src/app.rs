@@ -10,6 +10,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::access::caller::caller_layer;
 use crate::access::limits::Limiter;
+use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
 use crate::http;
 use crate::jobs::JobManager;
@@ -21,6 +22,8 @@ pub struct AppState {
     pub store: Store,
     pub jobs: JobManager,
     pub limiter: Limiter,
+    /// DNS resolver used by the SSRF guard; tests swap in a static one.
+    pub resolver: Resolver,
 }
 
 impl AppState {
@@ -31,6 +34,7 @@ impl AppState {
             store,
             jobs,
             limiter: Limiter::new(),
+            resolver: system_resolver(),
         }
     }
 }

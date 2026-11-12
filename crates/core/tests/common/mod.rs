@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reclip_core::access::keys::create_key;
+use reclip_core::access::ssrf::{Resolver, static_resolver};
 use reclip_core::app::{AppState, router, serve};
 use reclip_core::config::Config;
 use reclip_core::jobs::JobManager;
@@ -53,6 +54,20 @@ impl TestServer {
         tweak: impl FnOnce(&mut Config),
         signal: impl Future<Output = ()> + Send + 'static,
     ) -> (TestServer, JoinHandle<std::io::Result<()>>) {
+        let public = static_resolver([93, 184, 216, 34].into());
+        Self::boot(tweak, public, signal).await
+    }
+
+    /// Start a server whose DNS resolver is `resolver` for every name.
+    pub async fn start_resolving(resolver: Resolver) -> TestServer {
+        Self::boot(|_| {}, resolver, std::future::pending()).await.0
+    }
+
+    async fn boot(
+        tweak: impl FnOnce(&mut Config),
+        resolver: Resolver,
+        signal: impl Future<Output = ()> + Send + 'static,
+    ) -> (TestServer, JoinHandle<std::io::Result<()>>) {
         let downloads = tempfile::tempdir().unwrap();
         let web = tempfile::tempdir().unwrap();
         std::fs::write(web.path().join("index.html"), "<h1>ReClip</h1>").unwrap();
@@ -64,7 +79,8 @@ impl TestServer {
         tweak(&mut cfg);
         let downloads_dir = cfg.downloads_dir.clone();
         let store = Store::memory().await;
-        let state = AppState::new(Arc::new(cfg), store.clone());
+        let mut state = AppState::new(Arc::new(cfg), store.clone());
+        state.resolver = resolver;
         let jobs = state.jobs.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

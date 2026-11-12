@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use common::{TestServer, Visitor};
 use reclip_core::access::keys::sha256_hex;
+use reclip_core::access::ssrf::static_resolver;
 use reclip_core::store::{now, now_minus};
 use reclip_shared::{ApiKeyInfo, Scope};
 use reqwest::Response;
@@ -226,4 +227,37 @@ async fn key_requests_set_no_cookie() {
     let r = agent.post("/api/v1/jobs", job_body()).await;
     assert_eq!(r.status(), 202);
     assert!(!r.headers().contains_key("set-cookie"));
+}
+
+#[tokio::test]
+async fn metadata_url_rejected() {
+    let s = TestServer::start(|_| {}).await;
+    let body = json!({"url": "http://169.254.169.254/latest", "format": "mp4"});
+    let b = expect_error(s.post("/api/v1/jobs", body).await, 403, "forbidden_target").await;
+    assert_eq!(b["message"], "This address is not allowed");
+    let r = s
+        .post("/api/v1/probe", json!({"url": "http://[::1]:8080/"}))
+        .await;
+    expect_error(r, 403, "forbidden_target").await;
+    let list: Value = s.get("/api/v1/jobs").await.json().await.unwrap();
+    assert!(list["jobs"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn name_resolving_private_rejected() {
+    let s = TestServer::start_resolving(static_resolver([10, 1, 2, 3].into())).await;
+    let r = s.post("/api/v1/jobs", job_body()).await;
+    expect_error(r, 403, "forbidden_target").await;
+    let r = s.post("/api/v1/probe", json!({"url": "https://ok"})).await;
+    expect_error(r, 403, "forbidden_target").await;
+}
+
+#[tokio::test]
+async fn refused_target_consumes_no_quota() {
+    let s = TestServer::start(|c| c.limits.web.jobs_per_hour = 1).await;
+    for _ in 0..3 {
+        let body = json!({"url": "http://127.0.0.1/", "format": "mp4"});
+        expect_error(s.post("/api/v1/jobs", body).await, 403, "forbidden_target").await;
+    }
+    assert_eq!(s.post("/api/v1/jobs", job_body()).await.status(), 202);
 }
