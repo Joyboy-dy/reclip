@@ -96,10 +96,6 @@ async fn pending_routes_answer_501() {
         ("DELETE", "/api/v1/history/abc"),
         ("POST", "/api/v1/history/clean"),
         ("GET", "/api/v1/history/abc/thumb"),
-        ("POST", "/api/v1/admin/session"),
-        ("DELETE", "/api/v1/admin/session"),
-        ("GET", "/api/v1/admin/me"),
-        ("POST", "/api/v1/admin/password"),
     ] {
         let r = match method {
             "GET" => s.get(path).await,

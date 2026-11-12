@@ -12,6 +12,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 
 mod admin;
+pub use admin::AdminAccount;
 mod history;
 mod keys;
 mod queries;
