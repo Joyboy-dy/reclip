@@ -42,8 +42,13 @@ fn forbidden_v6(ip: Ipv6Addr) -> bool {
         || ip.is_loopback()
         || s[0] & 0xfe00 == 0xfc00 // fc00::/7 unique local
         || s[0] & 0xffc0 == 0xfe80 // fe80::/10 link-local
+        || s[0] & 0xffc0 == 0xfec0 // fec0::/10 deprecated site-local
         || s[0] & 0xff00 == 0xff00 // ff00::/8 multicast
         || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0; 4]) // NAT64
+        || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1) // 64:ff9b:1::/48 local NAT64
+        || (s[0..4] == [0; 4] && s[4] == 0xffff && s[5] == 0) // ::ffff:0:0:0/96 translated
+        || s[0] == 0x2002 // 2002::/16 6to4
+        || (s[0] == 0x2001 && s[1] == 0) // 2001::/32 Teredo
 }
 
 /// True for addresses the server must never fetch from.
@@ -139,6 +144,16 @@ mod tests {
             "ff02::1",
             "64:ff9b::1.2.3.4",
             "64:ff9b::808:808",
+            "64:ff9b:1::1",
+            "64:ff9b:1:ffff::1",
+            "::ffff:0:7f00:1",
+            "::ffff:0:5db8:d822",
+            "2002::1",
+            "2002:c0a8:101::1",
+            "2001::1",
+            "2001:0:4136:e378::1",
+            "fec0::1",
+            "feff::1",
         ];
         for s in bad {
             assert!(is_forbidden(ip(s)), "{s} should be forbidden");
@@ -155,6 +170,10 @@ mod tests {
             "198.20.0.1",
             "223.255.255.255",
             "1.1.1.1",
+            "2001:1::1",
+            "2001:4860:4860::8888",
+            "2003::1",
+            "64:ff9b:2::1",
         ];
         for s in good {
             assert!(!is_forbidden(ip(s)), "{s} should be allowed");
