@@ -89,6 +89,14 @@ jobs:
           tags: reclip-core:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Check that yt-dlp can impersonate Chrome
+        run: |
+          targets=$(docker run --rm --entrypoint yt-dlp reclip-core:ci --list-impersonate-targets)
+          echo "$targets"
+          if ! grep -qi chrome <<<"$targets"; then
+            echo "::error::yt-dlp in the image lists no chrome impersonate target"
+            exit 1
+          fi
       - name: Check image size (uncompressed, max 800 MB)
         run: |
           size=$(docker image inspect reclip-core:ci --format '{{.Size}}')
