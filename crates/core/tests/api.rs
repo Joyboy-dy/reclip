@@ -334,7 +334,7 @@ async fn legacy_ownerless_jobs_are_unreachable() {
     s.wait_job(&id, "done").await;
     let mut legacy = s.store.get(&id).await.unwrap().unwrap();
     legacy.id = "legacy1".into();
-    s.store.insert(&legacy, "").await.unwrap();
+    s.store.insert(&legacy, "", "").await.unwrap();
     let fresh = Visitor::new(&s.base);
     assert_eq!(fresh.get("/api/v1/jobs/legacy1").await.status(), 404);
     let l: Value = fresh.get("/api/v1/jobs").await.json().await.unwrap();

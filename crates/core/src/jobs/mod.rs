@@ -129,7 +129,10 @@ impl JobManager {
             created_at: crate::store::now(),
             expires_at: None,
         };
-        self.store().insert(&job, owner).await.map_err(internal)?;
+        self.store()
+            .insert(&job, owner, "")
+            .await
+            .map_err(internal)?;
         self.enqueue(job.clone(), owner);
         Ok(job)
     }

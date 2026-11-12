@@ -40,3 +40,38 @@ fn create_job_request_accepts_missing_optionals() {
     assert_eq!(r.title, None);
     assert_eq!(r.thumbnail, None);
 }
+
+#[test]
+fn scopes_use_colon_names() {
+    assert_eq!(
+        serde_json::to_string(&Scope::JobsCreate).unwrap(),
+        "\"jobs:create\""
+    );
+    assert_eq!(
+        serde_json::from_str::<Scope>("\"jobs:cancel\"").unwrap(),
+        Scope::JobsCancel
+    );
+    assert!(!Scope::default_set().contains(&Scope::Delegate));
+    assert_eq!(Scope::default_set().len(), 4);
+}
+
+#[test]
+fn create_key_request_minimal() {
+    let r: CreateKeyRequest = serde_json::from_str(r#"{"name":"agent"}"#).unwrap();
+    assert_eq!(r.name, "agent");
+    assert!(!r.unlimited);
+    assert_eq!(r.scopes, None);
+    assert_eq!(r.limits, None);
+}
+
+#[test]
+fn key_limits_default_to_none() {
+    let l: KeyLimits = serde_json::from_str("{}").unwrap();
+    assert_eq!(l, KeyLimits::default());
+}
+
+#[test]
+fn new_error_codes_status() {
+    assert_eq!(ErrorCode::Unauthorized.http_status(), 401);
+    assert_eq!(ErrorCode::Forbidden.http_status(), 403);
+}

@@ -4,7 +4,7 @@ export type MediaFormat = "mp4" | "mp3";
 
 export type JobState = "queued" | "downloading" | "processing" | "done" | "cancelled" | "failed" | "expired";
 
-export type ErrorCode = "bot_check" | "unsupported_url" | "unavailable" | "private" | "geo_blocked" | "too_large" | "too_long" | "timeout" | "interrupted" | "cancelled" | "rate_limited" | "forbidden_target" | "invalid_request" | "internal";
+export type ErrorCode = "bot_check" | "unsupported_url" | "unavailable" | "private" | "geo_blocked" | "too_large" | "too_long" | "timeout" | "interrupted" | "cancelled" | "rate_limited" | "forbidden_target" | "unauthorized" | "forbidden" | "invalid_request" | "internal";
 
 export type ApiError = { code: ErrorCode, message: string, };
 
@@ -49,3 +49,29 @@ expires_at: string | null, };
 export type JobList = { jobs: Array<Job>, };
 
 export type PublicConfig = { version: string, telegram_bot_username: string | null, playlist_limit: number, };
+
+export type LinkResponse = { url: string, 
+/**
+ * RFC 3339 timestamp.
+ */
+expires_at: string, };
+
+export type Scope = "probe" | "jobs:create" | "jobs:read" | "jobs:cancel" | "delegate";
+
+export type KeyLimits = { probes_per_minute: number | null, jobs_per_hour: number | null, max_active: number | null, };
+
+export type CreateKeyRequest = { name: string, scopes?: Array<Scope>, unlimited: boolean, expires_in_days?: number, limits?: KeyLimits, };
+
+export type ApiKeyInfo = { id: string, name: string, scopes: Array<Scope>, unlimited: boolean, 
+/**
+ * Own limits; every field is null when the key has none.
+ */
+limits: KeyLimits, 
+/**
+ * RFC 3339 timestamp.
+ */
+created_at: string, expires_at: string | null, revoked_at: string | null, last_used_at: string | null, request_count: number, };
+
+export type CreatedKey = { key: string, info: ApiKeyInfo, };
+
+export type ApiKeyList = { keys: Array<ApiKeyInfo>, };

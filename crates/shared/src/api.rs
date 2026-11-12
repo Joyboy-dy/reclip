@@ -110,3 +110,11 @@ pub struct PublicConfig {
     pub telegram_bot_username: Option<String>,
     pub playlist_limit: u32,
 }
+
+/// A signed, time-limited download link.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct LinkResponse {
+    pub url: String,
+    /// RFC 3339 timestamp.
+    pub expires_at: String,
+}

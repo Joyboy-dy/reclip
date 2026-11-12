@@ -11,9 +11,13 @@ use serde::de::DeserializeOwned;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
+mod keys;
 mod queries;
+mod settings;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_access;
 
 const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, filename, size, \
                        error_code, error_message, created_at, expires_at";
@@ -154,12 +158,13 @@ impl Store {
         Store(pool)
     }
 
-    /// Insert a job for `owner` (e.g. `web:<hex>`; `""` for legacy rows).
-    pub async fn insert(&self, job: &Job, owner: &str) -> Result<()> {
+    /// Insert a job for `owner` (e.g. `web:<hex>`; `""` for legacy rows),
+    /// counted against `quota_key` (`""` for none).
+    pub async fn insert(&self, job: &Job, owner: &str, quota_key: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO jobs (id, url, format, format_id, title, thumbnail, state, \
-             filename, size, error_code, error_message, created_at, expires_at, owner) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             filename, size, error_code, error_message, created_at, expires_at, owner, quota_key) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&job.id)
         .bind(&job.url)
@@ -175,6 +180,7 @@ impl Store {
         .bind(&job.created_at)
         .bind(&job.expires_at)
         .bind(owner)
+        .bind(quota_key)
         .execute(&self.0)
         .await?;
         Ok(())

@@ -61,11 +61,11 @@ async fn recover_fails_running_and_requeues_queued() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::memory().await;
     store
-        .insert(&job("run1", JobState::Downloading, None), OWNER)
+        .insert(&job("run1", JobState::Downloading, None), OWNER, "")
         .await
         .unwrap();
     store
-        .insert(&job("queued1", JobState::Queued, Some("137")), OWNER)
+        .insert(&job("queued1", JobState::Queued, Some("137")), OWNER, "")
         .await
         .unwrap();
     make_dir(dir.path(), "run1");
@@ -102,7 +102,7 @@ async fn recover_removes_orphan_dirs() {
         "0190f5c2a1b47c3d8e9f00112233aa03",
     ];
     store
-        .insert(&job(done, JobState::Done, None), OWNER)
+        .insert(&job(done, JobState::Done, None), OWNER, "")
         .await
         .unwrap();
     make_dir(dir.path(), done);
