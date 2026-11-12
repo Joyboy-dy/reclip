@@ -7,7 +7,7 @@ use reclip_shared::{ApiError, CreateJobRequest, ErrorCode, Job, JobList, Scope};
 use super::{ApiJson, HttpError, api_error, validate_url};
 use crate::access::caller::Caller;
 use crate::access::limits::RateInfo;
-use crate::access::quota::check_create;
+use crate::access::quota::{admission, check_create};
 use crate::access::ssrf::check_target;
 use crate::app::AppState;
 use crate::jobs::{ManagerError, not_resumable};
@@ -46,6 +46,9 @@ pub async fn create(
     check_target(&req.url, &s.resolver)
         .await
         .map_err(|e| HttpError(e).into_response())?;
+    // The cap check and the insert must not interleave with another create
+    // for the same quota key.
+    let _admission = admission(&s, &caller).await;
     let rate = check_create(&s, &caller).await?;
     let job = s
         .jobs
@@ -101,6 +104,8 @@ pub async fn resume(
     check_target(&job.url, &s.resolver)
         .await
         .map_err(|e| HttpError(e).into_response())?;
+    // Same rule as a create: the cap check and the requeue must not interleave.
+    let _admission = admission(&s, &caller).await;
     let rate = check_create(&s, &caller).await?;
     match s.jobs.resume(&caller.owner, &id).await {
         Ok(Some(job)) => Ok((StatusCode::ACCEPTED, rate, Json(job))),

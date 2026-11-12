@@ -194,3 +194,24 @@ async fn ipv6_visitors_share_their_64() {
     expect_limited(from("2001:db8:1:2:ffff:ffff:ffff:ffff").await.unwrap()).await;
     assert_eq!(from("2001:db8:1:3::1").await.unwrap().status(), 202);
 }
+
+#[tokio::test]
+async fn concurrent_creates_respect_the_active_cap() {
+    let s = TestServer::start(|c| c.limits.web.max_active = 1).await;
+    let posts = (0..8).map(|n| s.post(JOBS, job_body(&format!("https://slow.example/c{n}"))));
+    let statuses: Vec<u16> = futures_util::future::join_all(posts)
+        .await
+        .iter()
+        .map(|r| r.status().as_u16())
+        .collect();
+    assert_eq!(
+        statuses.iter().filter(|&&c| c == 202).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|&&c| c == 429).count(),
+        7,
+        "{statuses:?}"
+    );
+}
