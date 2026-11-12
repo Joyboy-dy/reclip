@@ -47,9 +47,19 @@ Maquettes à valider avant implémentation : https://claude.ai/artifact/CxA76Xnr
 | # PR | Décision |
 |---|---|
 | #101 (thème sombre) | Non. |
-| #101 (historique) | Oui : historique de 30 jours par visiteur (titre, miniature locale de petite taille, format, taille, date), avec « Save » si le fichier existe encore et « Download again » sinon ; bouton « Clear history ». |
+| #101 (historique) | Oui : historique de 30 jours par visiteur (titre, miniature locale de petite taille, format, taille, date), avec « Save » si le fichier existe encore et « Download again » sinon. Suppression ligne par ligne, et menu « Clean up » : retirer les fichiers expirés, ce qui a plus de 7 jours, plus de 14 jours, ou tout l'historique. L'historique ne garde que des métadonnées (quelques Ko par ligne), jamais les médias. |
 | #5 (langues) | Non : interface en anglais seulement. |
 | #68 | Oui : « Resume » sur une tâche annulée ou échouée, qui reprend les fichiers `.part` de yt-dlp dans le même dossier. Les fichiers partiels d'une tâche annulée sont donc gardés jusqu'à son expiration. |
+
+## Composants et écrans (retours sur les maquettes, `_r1.md`)
+
+- **Apparence inchangée**, mais les contrôles interactifs reposent sur des composants personnalisables au lieu des contrôles natifs du navigateur : cases à cocher, listes déroulantes, menus, info-bulles et boîtes de dialogue.
+- **Choix technique** : le frontend passe à React + shadcn/ui (primitives Radix, Tailwind configuré avec les couleurs, polices et rayons actuels). Bun compile l'ensemble comme aujourd'hui. Le coût est d'environ 50 Ko compressés de JavaScript en plus. En échange, l'accessibilité (clavier, lecteurs d'écran) et le comportement des menus sont ceux d'une bibliothèque éprouvée. La page publique et `/admin` partagent les mêmes composants.
+- **Tableau des clés** : colonne « Expires » avec une icône calendrier, seulement pour les clés qui expirent (orange à moins de 7 jours). Au survol, une info-bulle donne la date et le nombre de jours restants.
+- **Responsive** : chaque écran est prévu pour ordinateur, tablette (768 px) et mobile (390 px).
+  - Sur mobile, le tableau des clés devient une liste de cartes et les boîtes de dialogue s'ouvrent en panneau depuis le bas.
+  - Les boutons de format occupent toute la largeur.
+  - Rendus : 24 maquettes sur le canevas.
 
 ## Agents, outils, déploiement
 
@@ -59,6 +69,6 @@ Maquettes à valider avant implémentation : https://claude.ai/artifact/CxA76Xnr
 | #61 (Whisper) | Non. |
 | #60 (CLI utilisateur) | Non : l'API, WebMCP et `/mcp` couvrent ce besoin. |
 | #17 | Oui : image publiée sur GHCR par la CI, que Dokploy peut tirer. |
-| #12 (plafond disque) | Oui : `RECLIP_MAX_DISK` (20 Go par défaut). Au-delà, les fichiers terminés les plus anciens expirent en premier ; s'il n'y en a plus, les nouvelles tâches attendent. |
+| #12 (plafond disque) | Oui, avec un stockage court parce que le serveur n'a pas de disque dédié aux médias : fichiers gardés 6 h (`RECLIP_FILE_TTL=21600`), plafond total `RECLIP_MAX_DISK=5G` (fichiers terminés, en cours et partiels compris). Au-delà, les fichiers terminés les plus anciens expirent en premier ; s'il n'y en a plus, les nouvelles tâches attendent. Les fichiers partiels d'une tâche annulée comptent dans le plafond et partent les premiers. |
 | #53 | Phase 5 : le bot reste ouvert à tous, sans liste d'accès. |
 | #82, #64, #33, #70 | Non. |
