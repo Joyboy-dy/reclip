@@ -61,8 +61,9 @@ services:
       RECLIP_LIMIT_TG_PROBES_PER_MIN: ${RECLIP_LIMIT_TG_PROBES_PER_MIN:-30}
       RECLIP_LIMIT_TG_JOBS_PER_HOUR: ${RECLIP_LIMIT_TG_JOBS_PER_HOUR:-40}
       RECLIP_LIMIT_TG_ACTIVE: ${RECLIP_LIMIT_TG_ACTIVE:-10}
-      # Empty = no bot key is created. The bot service reads the same file.
-      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE:-/run/reclip/bot.key}
+      # No colon on purpose: unset = /run/reclip/bot.key, set but empty = no bot key is created.
+      # The bot service reads the same file.
+      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE-/run/reclip/bot.key}
       RECLIP_NO_UPDATE: ${RECLIP_NO_UPDATE:-}
       RUST_LOG: ${RUST_LOG:-info}
       TZ: ${TZ:-UTC}
@@ -90,7 +91,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
       RECLIP_CORE_URL: ${RECLIP_CORE_URL:-http://core:8899}
-      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE:-/run/reclip/bot.key}
+      RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE-/run/reclip/bot.key}
       RECLIP_BOT_STATE: ${RECLIP_BOT_STATE:-/var/lib/reclip-bot/state.json}
       RECLIP_BOT_MAX_UPLOAD: ${RECLIP_BOT_MAX_UPLOAD:-}
       RUST_LOG: ${RUST_LOG:-info}

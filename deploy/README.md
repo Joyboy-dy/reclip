@@ -240,7 +240,7 @@ Le profil `telegram-local` démarre un serveur Bot API local. Le bot peut alors 
    COMPOSE_PROFILES=telegram,telegram-local
    ```
 
-Après `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`.
+Après `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local (`curl -X POST http://telegram-bot-api:8081/bot<jeton>/close` depuis le r�seau du conteneur) et attendre une dizaine de minutes. Le volume `tg-data` garde les fichiers envoy�s et grossit avec le temps.
 
 ### Clé et état
 
