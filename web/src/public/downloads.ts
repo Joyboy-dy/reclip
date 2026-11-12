@@ -97,6 +97,9 @@ export async function download(key: string): Promise<void> {
     return;
   }
   const req = jobRequest(first, opts);
+  // The previous job (failed or cancelled) stays until its replacement
+  // exists: a restored card can only retry through it, so a failed creation
+  // must leave it in place (Retry and Remove still work, a refresh keeps it).
   const previous = first.jobId;
   updateCard(key, (c) => {
     Object.assign(c, { status: "downloading", format: req.format, clip: req.clip, strip: req.strip_metadata });
@@ -104,15 +107,16 @@ export async function download(key: string): Promise<void> {
     c.progress = c.speed = c.eta = undefined;
     c.resumable = false;
   });
-  if (previous) {
-    stopTracking(key);
-    await deleteJob(previous).catch(() => {});
-  }
+  if (previous) stopTracking(key);
+  const dropPrevious = async () => {
+    if (previous) await deleteJob(previous).catch(() => {});
+  };
   // A rate-limited creation waits and retries a few times; a card removed
   // meanwhile stops the loop.
   for (let retries = 0; ; retries++) {
     try {
       const job = await createJob(req);
+      await dropPrevious();
       if (!updateCard(key, (c) => applyJob(c, job))) {
         await deleteJob(job.id).catch(() => {});
         return;
@@ -123,11 +127,15 @@ export async function download(key: string): Promise<void> {
       const wait = rateLimitWait(err, retries);
       const alive = updateCard(key, (c) => {
         if (wait !== undefined) c.waitUntil = Date.now() + wait * 1000;
-        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined });
+        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined, jobId: previous });
       });
+      if (!alive) await dropPrevious();
       if (!alive || wait === undefined) return;
       await sleep(wait * 1000);
-      if (!updateCard(key, (c) => (c.waitUntil = undefined))) return;
+      if (!updateCard(key, (c) => (c.waitUntil = undefined))) {
+        await dropPrevious();
+        return;
+      }
     }
   }
 }

@@ -144,3 +144,20 @@ test("an invalid page clip does not block a card that keeps its own options", as
   expect(create?.body).toMatchObject({ format: "mkv", format_id: "136", clip: { start: 5, end: 30 }, strip_metadata: true });
   expect(findCard("j0")).toMatchObject({ status: "downloading", jobId: "j1", error: undefined });
 });
+
+test("a failed retry keeps the previous job, so Retry and Remove stay available", async () => {
+  store.set({ cards: [{ key: "j0", url: "https://y/v", status: "error", jobId: "j0", jobState: "failed", format: "mp4" }] });
+  reply = (c) => (c.method === "POST" ? json({ code: "internal", message: "boom" }, 500) : json({}));
+  await download("j0");
+  expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  expect(findCard("j0")).toMatchObject({ status: "error", jobId: "j0" });
+});
+
+test("a successful retry deletes the previous job only after the new one exists", async () => {
+  store.set({ cards: [{ key: "j0", url: "https://y/v", status: "error", jobId: "j0", jobState: "failed", format: "mp4" }] });
+  reply = (c) => (c.method === "POST" ? json(job()) : new Response(null, { status: 204 }));
+  await download("j0");
+  const order = calls.map((c) => `${c.method} ${c.path}`);
+  expect(order.indexOf("POST /api/v1/jobs")).toBeLessThan(order.indexOf("DELETE /api/v1/jobs/j0"));
+  expect(findCard("j0")).toMatchObject({ status: "downloading", jobId: "j1" });
+});
