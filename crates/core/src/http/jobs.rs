@@ -2,9 +2,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use reclip_shared::{CreateJobRequest, Job, JobList, Scope};
+use reclip_shared::{ApiError, CreateJobRequest, ErrorCode, Job, JobList, Scope};
 
-use super::{ApiJson, HttpError, validate_url};
+use super::{ApiJson, HttpError, api_error, validate_url};
 use crate::access::caller::Caller;
 use crate::access::limits::RateInfo;
 use crate::access::quota::check_create;
@@ -12,12 +12,34 @@ use crate::access::ssrf::check_target;
 use crate::app::AppState;
 use crate::jobs::{ManagerError, not_resumable};
 
+/// Check the options the request body cannot express by its types alone.
+/// A resumed job reuses the stored values, checked here at creation.
+fn validate_options(req: &CreateJobRequest) -> Result<(), ApiError> {
+    let invalid = |message| Err(api_error(ErrorCode::InvalidRequest, message));
+    if let Some(clip) = req.clip {
+        if !clip.start.is_finite() || clip.start < 0.0 {
+            return invalid("Clip start must be a time of 0 or more");
+        }
+        if clip
+            .end
+            .is_some_and(|end| !end.is_finite() || end <= clip.start)
+        {
+            return invalid("Clip end must come after its start");
+        }
+    }
+    if req.playlist_item == Some(0) {
+        return invalid("Playlist item must be 1 or more");
+    }
+    Ok(())
+}
+
 pub async fn create(
     State(s): State<AppState>,
     caller: Caller,
     ApiJson(mut req): ApiJson<CreateJobRequest>,
 ) -> Result<(StatusCode, Option<RateInfo>, Json<Job>), Response> {
     req.url = validate_url(&req.url).map_err(|e| HttpError(e).into_response())?;
+    validate_options(&req).map_err(|e| HttpError(e).into_response())?;
     caller
         .require(Scope::JobsCreate)
         .map_err(IntoResponse::into_response)?;
