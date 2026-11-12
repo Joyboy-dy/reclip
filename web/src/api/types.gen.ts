@@ -6,7 +6,7 @@ export type Clip = { start: number,
 /**
  * `None` runs to the end of the media.
  */
-end?: number, };
+end?: number | null, };
 
 export type JobState = "queued" | "downloading" | "processing" | "done" | "cancelled" | "failed" | "expired";
 

@@ -239,7 +239,13 @@ impl Config {
                 Some(v) => Some(v).filter(|v| !v.is_empty()),
             },
             max_disk: get("RECLIP_MAX_DISK")
-                .and_then(|v| parse_size(&v))
+                .and_then(|v| {
+                    let size = parse_size(&v);
+                    if size.is_none() {
+                        tracing::warn!(value = v, "RECLIP_MAX_DISK ignored: use bytes or 5G, 500M");
+                    }
+                    size
+                })
                 .unwrap_or(5 << 30),
             history_days: num("RECLIP_HISTORY_DAYS")
                 .and_then(|v| u32::try_from(v).ok())

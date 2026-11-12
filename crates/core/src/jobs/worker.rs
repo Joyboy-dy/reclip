@@ -110,6 +110,7 @@ async fn download(
     cancel: &CancellationToken,
 ) -> Result<(String, u64), ApiError> {
     let store = mgr.store();
+    let playlist_item = store.playlist_item(&job.id).await.map_err(internal)?;
     store
         .set_state(&job.id, JobState::Downloading, None, None, None)
         .await
@@ -129,7 +130,7 @@ async fn download(
         format_id: job.format_id.clone(),
         clip: job.clip,
         strip_metadata: job.strip_metadata,
-        playlist_item: store.playlist_item(&job.id).await.map_err(internal)?,
+        playlist_item,
     };
     let download = runner::download_with(
         mgr.config(),

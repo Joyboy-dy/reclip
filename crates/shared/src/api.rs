@@ -36,7 +36,7 @@ pub struct Clip {
     pub start: f64,
     /// `None` runs to the end of the media.
     #[serde(default)]
-    #[ts(optional)]
+    #[ts(optional = nullable)]
     pub end: Option<f64>,
 }
 

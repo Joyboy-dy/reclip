@@ -60,6 +60,9 @@ async fn pages_get_a_fresh_nonce_each_response() {
     nonce_of(s.get("/some/route").await, "index").await;
     nonce_of(s.get("/admin").await, "admin").await;
     nonce_of(s.get("/admin/keys").await, "admin").await;
+    nonce_of(s.get("/admin/").await, "admin").await;
+    nonce_of(s.get("/index.html").await, "index").await;
+    nonce_of(s.get("/admin.html").await, "admin").await;
 }
 
 #[tokio::test]
