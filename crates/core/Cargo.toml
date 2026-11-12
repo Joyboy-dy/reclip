@@ -17,6 +17,10 @@ path = "src/main.rs"
 name = "fake-ytdlp"
 path = "src/bin/fake-ytdlp.rs"
 
+[[bin]]
+name = "fake-ffmpeg"
+path = "src/bin/fake-ffmpeg.rs"
+
 [dependencies]
 reclip-shared = { path = "../shared" }
 serde.workspace = true

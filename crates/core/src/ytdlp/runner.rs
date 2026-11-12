@@ -13,8 +13,10 @@ use super::args::{
     DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
     session_args,
 };
+use super::download_args::is_x_post;
 use super::errors::classify;
-use super::parse::{parse_first_json, playlist_info, video_info};
+use super::finalize::finalize;
+use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
 use crate::config::Config;
@@ -24,6 +26,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const KILL_GRACE: Duration = Duration::from_secs(5);
 /// stdout lines kept from a download for failure classification.
 const DOWNLOAD_TAIL: usize = 200;
+/// Thumbnail written next to the media; moved by the job worker.
+const THUMB_NAME: &str = "thumb.jpg";
 
 fn err(code: ErrorCode, message: impl Into<String>) -> ApiError {
     ApiError {
@@ -93,6 +97,11 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
+    if is_x_post(url)
+        && let Some(post) = x_post_info(&out.stdout, url)
+    {
+        return Ok(ProbeResponse::Playlist(post));
+    }
     let json = parse_first_json(&out.stdout)?;
     if url.contains("list=") {
         Ok(ProbeResponse::Playlist(playlist_info(&json)))
@@ -140,20 +149,22 @@ pub async fn download_with(
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    match pick_output(job_dir, format) {
-        Some(p) => Ok(p),
-        None => Err(no_file_error(&out)),
-    }
+    let Some(path) = pick_output(job_dir, format) else {
+        return Err(no_file_error(&out));
+    };
+    finalize(cfg, &path, opts, &cancel).await?;
+    Ok(path)
 }
 
-/// Keep the `.mp4` (or `.mp3`) file, else the first file; delete the rest.
+/// Keep the `media.<ext>` file (preferring the requested extension), else the
+/// first file; delete the rest except the `thumb.jpg` thumbnail.
 fn pick_output(job_dir: &Path, format: MediaFormat) -> Option<PathBuf> {
     let want = format_name(format);
     let mut files: Vec<PathBuf> = std::fs::read_dir(job_dir)
         .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.is_file())
+        .filter(|p| p.is_file() && p.file_name().is_some_and(|n| n != THUMB_NAME))
         .collect();
     files.sort();
     let keep = files

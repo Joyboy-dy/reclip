@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use reclip_shared::{Clip, MediaFormat};
 use tempfile::TempPath;
 
+use super::download_args::is_x_post;
 use crate::config::Config;
 
 /// Arguments shared by every yt-dlp call. The cookies copy lives as long as
@@ -65,7 +65,10 @@ pub fn session_args_with(
 }
 
 pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
-    if url.contains("list=") {
+    if is_x_post(url) {
+        // No --no-playlist: a multi-video post then prints one JSON per video.
+        ["-j", "--", url].map(String::from).to_vec()
+    } else if url.contains("list=") {
         ["--flat-playlist", "-J", "--playlist-end"]
             .map(String::from)
             .into_iter()
@@ -78,97 +81,7 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
     }
 }
 
-/// One parsable line per progress update, read by `progress::parse_line`.
-const PROGRESS_TEMPLATE: &str = "download:[reclip] %(progress.downloaded_bytes)s \
-    %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s \
-    %(progress.eta)s";
-
-/// The `-f` selector of a download; `None` for audio (extraction).
-pub fn format_selector(format: MediaFormat, format_id: Option<&str>) -> Option<String> {
-    match (format.is_audio(), format_id) {
-        (true, _) => None,
-        (false, Some(id)) => Some(format!("{id}+bestaudio/best")),
-        (false, None) => Some("bestvideo+bestaudio/best".into()),
-    }
-}
-
-/// What a download produces, as chosen by the visitor.
-#[derive(Debug, Clone)]
-pub struct DownloadOptions {
-    pub format: MediaFormat,
-    pub format_id: Option<String>,
-    pub clip: Option<Clip>,
-    pub strip_metadata: bool,
-    /// 1-based item of a multi-video post.
-    pub playlist_item: Option<u32>,
-}
-
-impl DownloadOptions {
-    /// Options with nothing but a format.
-    pub fn new(format: MediaFormat) -> DownloadOptions {
-        DownloadOptions {
-            format,
-            format_id: None,
-            clip: None,
-            strip_metadata: false,
-            playlist_item: None,
-        }
-    }
-}
-
-/// File extension / yt-dlp container or audio format name of `format`.
-pub(super) fn format_name(format: MediaFormat) -> &'static str {
-    match format {
-        MediaFormat::Mp4 => "mp4",
-        MediaFormat::Mkv => "mkv",
-        MediaFormat::Mov => "mov",
-        MediaFormat::Mp3 => "mp3",
-        MediaFormat::M4a => "m4a",
-        MediaFormat::Opus => "opus",
-        MediaFormat::Flac => "flac",
-        MediaFormat::Wav => "wav",
-    }
-}
-
-/// Arguments of one download into `out_dir` (`media.<ext>`). Only mp4 and
-/// mp3 are fully handled for now; the other formats use the same shape.
-pub fn download_args(
-    out_dir: &Path,
-    opts: &DownloadOptions,
-    cfg: &Config,
-    url: &str,
-) -> Vec<String> {
-    let template = out_dir.join("media.%(ext)s");
-    let mut a: Vec<String> = [
-        "--no-playlist",
-        "--newline",
-        "-o",
-        &template.to_string_lossy(),
-        "--progress-template",
-        PROGRESS_TEMPLATE,
-    ]
-    .map(String::from)
-    .to_vec();
-    let name = format_name(opts.format);
-    match format_selector(opts.format, opts.format_id.as_deref()) {
-        None => a.extend(["-x", "--audio-format", name].map(String::from)),
-        Some(selector) => a.extend([
-            "-f".into(),
-            selector,
-            "--merge-output-format".into(),
-            name.into(),
-        ]),
-    }
-    a.extend([
-        "--max-filesize".into(),
-        cfg.max_filesize.clone(),
-        "--match-filter".into(),
-        format!("!is_live & duration <=? {}", cfg.max_duration),
-        "--".into(),
-        url.into(),
-    ]);
-    a
-}
+pub use super::download_args::{DownloadOptions, download_args, format_name, format_selector};
 
 #[cfg(test)]
 mod tests {
@@ -259,60 +172,6 @@ mod tests {
                 "--",
                 "https://youtube.com/watch?v=a&list=RDx"
             ]
-        );
-    }
-
-    fn dl(format: MediaFormat, format_id: Option<&str>) -> Vec<String> {
-        let opts = DownloadOptions {
-            format_id: format_id.map(str::to_string),
-            ..DownloadOptions::new(format)
-        };
-        download_args(Path::new("/d"), &opts, &cfg(), "u")
-    }
-    #[test]
-    fn mp3_download_args() {
-        let a = dl(MediaFormat::Mp3, None);
-        assert!(a.windows(2).any(|w| w == ["--audio-format", "mp3"]) && a.contains(&"-x".into()));
-        assert_eq!(a[..3], ["--no-playlist", "--newline", "-o"]);
-        assert!(a[3].ends_with("media.%(ext)s") && a[3].starts_with("/d"));
-        assert_eq!(a.last().unwrap(), "u");
-    }
-    #[test]
-    fn mp4_with_format_id() {
-        let a = dl(MediaFormat::Mp4, Some("137"));
-        assert!(a.windows(2).any(|w| w == ["-f", "137+bestaudio/best"]));
-        assert!(a.windows(2).any(|w| w == ["--merge-output-format", "mp4"]));
-        assert!(a.windows(2).any(|w| w == ["--max-filesize", "2G"]));
-        assert!(
-            a.windows(2)
-                .any(|w| w == ["--match-filter", "!is_live & duration <=? 10800"])
-        );
-        let n = a.len();
-        assert_eq!(a[n - 2], "--");
-        assert_eq!(a[n - 1], "u");
-    }
-    #[test]
-    fn download_args_ask_for_parsable_progress() {
-        let a = dl(MediaFormat::Mp4, None);
-        assert!(a.windows(2).any(|w| w
-            == [
-                "--progress-template",
-                "download:[reclip] %(progress.downloaded_bytes)s %(progress.total_bytes)s \
-                 %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s"
-            ]));
-    }
-    #[test]
-    fn download_args_reject_live_streams() {
-        let a = dl(MediaFormat::Mp4, None);
-        let i = a.iter().position(|x| x == "--match-filter").unwrap();
-        assert!(a[i + 1].contains("!is_live"));
-    }
-    #[test]
-    fn mp4_without_format_id() {
-        let a = dl(MediaFormat::Mp4, None);
-        assert!(
-            a.windows(2)
-                .any(|w| w == ["-f", "bestvideo+bestaudio/best"])
         );
     }
 }

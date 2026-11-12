@@ -35,6 +35,8 @@ pub struct Config {
     pub downloads_dir: PathBuf,
     pub web_dir: PathBuf,
     pub ytdlp_bin: String,
+    /// ffmpeg executable used for the post-download metadata/faststart pass.
+    pub ffmpeg_bin: String,
     pub cookies: Option<PathBuf>,
     pub proxy: Option<String>,
     pub js_runtime: Option<String>,
@@ -203,6 +205,7 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("./web/dist")),
             ytdlp_bin: get("RECLIP_YTDLP_BIN").unwrap_or_else(|| "yt-dlp".into()),
+            ffmpeg_bin: get("RECLIP_FFMPEG_BIN").unwrap_or_else(|| "ffmpeg".into()),
             cookies: get("RECLIP_COOKIES").map(PathBuf::from),
             proxy: get("RECLIP_PROXY"),
             js_runtime: get("RECLIP_JS_RUNTIME"),
