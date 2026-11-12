@@ -4,9 +4,10 @@ use std::path::Path;
 
 use reclip_core::access::bot_key::{BOT_KEY_NAME, ensure_bot_key, ensure_configured};
 use reclip_core::access::key_usage::KeyUsage;
+use reclip_core::access::keys::sha256_hex;
 use reclip_core::access::keys::{create_key, verify_key};
 use reclip_core::store::Store;
-use reclip_shared::{CreateKeyRequest, Scope};
+use reclip_shared::{ApiKeyInfo, CreateKeyRequest, KeyLimits, Scope};
 
 async fn store(dir: &Path) -> Store {
     Store::open(&dir.join("t.db")).await.unwrap()
@@ -116,4 +117,88 @@ async fn file_is_private() {
     ensure_bot_key(&store, &path).await.unwrap();
     let mode = std::fs::metadata(&path).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+async fn assert_no_active_keys(store: &Store) {
+    let keys = store.list_keys().await.unwrap();
+    assert!(keys.iter().all(|k| k.revoked_at.is_some()), "{keys:?}");
+}
+
+#[tokio::test]
+async fn path_that_is_a_directory_fails_without_a_live_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let path = dir.path().join("bot.key");
+    std::fs::create_dir(&path).unwrap();
+    let err = ensure_bot_key(&store, &path).await.unwrap_err();
+    assert!(format!("{err:#}").contains("bot.key"));
+    assert_no_active_keys(&store).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unwritable_directory_fails_without_a_key() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let locked = dir.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::File::create(locked.join("probe")).is_ok() {
+        return; // running as root: permissions do not apply
+    }
+    let path = locked.join("bot.key");
+    let err = ensure_bot_key(&store, &path).await.unwrap_err();
+    assert!(format!("{err:#}").contains("bot.key"));
+    assert_no_active_keys(&store).await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[tokio::test]
+async fn replaces_an_expired_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let path = dir.path().join("bot.key");
+    let secret = "A".repeat(43);
+    let info = ApiKeyInfo {
+        id: "abcd1234".into(),
+        name: "old".into(),
+        scopes: vec![Scope::Delegate],
+        unlimited: false,
+        limits: KeyLimits::default(),
+        created_at: "2000-01-01T00:00:00.000Z".into(),
+        expires_at: Some("2000-01-02T00:00:00.000Z".into()),
+        revoked_at: None,
+        last_used_at: None,
+        request_count: 0,
+    };
+    store.insert_key(&info, &sha256_hex(&secret)).await.unwrap();
+    let old = format!("rck_abcd1234_{secret}");
+    std::fs::write(
+        &path,
+        format!(
+            "{old}
+"
+        ),
+    )
+    .unwrap();
+    ensure_bot_key(&store, &path).await.unwrap();
+    let new = read_key(&path);
+    assert_ne!(new, old);
+    assert!(valid(&store, &new).await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn reused_file_is_tightened_to_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let path = dir.path().join("bot.key");
+    ensure_bot_key(&store, &path).await.unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    ensure_bot_key(&store, &path).await.unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    assert_eq!(store.list_keys().await.unwrap().len(), 1);
 }

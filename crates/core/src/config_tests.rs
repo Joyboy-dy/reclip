@@ -218,6 +218,8 @@ fn bot_key_file_is_off_by_default() {
     let c =
         Config::from_env(&|k| (k == "RECLIP_BOT_KEY_FILE").then(|| "/run/reclip/bot.key".into()));
     assert_eq!(c.bot_key_file, Some(PathBuf::from("/run/reclip/bot.key")));
+    let c = Config::from_env(&|k| (k == "RECLIP_BOT_KEY_FILE").then(String::new));
+    assert_eq!(c.bot_key_file, None);
     let c = Config::from_env(&|k| (k == "RECLIP_BOT_KEY_FILE").then(|| "  ".into()));
     assert_eq!(c.bot_key_file, None);
 }

@@ -23,10 +23,14 @@ pub async fn ensure_configured(store: &Store, path: Option<&Path>) -> anyhow::Re
 
 /// Make sure `path` holds a valid, unrevoked key with the `delegate` scope;
 /// create one and write the file otherwise. A stale key is left as it is.
+/// The temp file is made before the key, so an unusable path fails without
+/// leaving a key behind; a later write failure revokes the new key.
 pub async fn ensure_bot_key(store: &Store, path: &Path) -> anyhow::Result<()> {
     if current_key_is_valid(store, path).await {
+        make_private(path);
         return Ok(());
     }
+    let tmp = temp_file_beside(path)?;
     let created = create_key(
         store,
         CreateKeyRequest {
@@ -45,7 +49,12 @@ pub async fn ensure_bot_key(store: &Store, path: &Path) -> anyhow::Result<()> {
     )
     .await
     .map_err(|e| anyhow::anyhow!("create bot key: {}", e.message))?;
-    write_private(path, &created.key)?;
+    if let Err(e) = write_and_rename(tmp, path, &created.key) {
+        if let Err(re) = store.revoke_key(&created.info.id).await {
+            tracing::warn!(error = %re, "could not revoke the unused bot key");
+        }
+        return Err(e);
+    }
     tracing::info!("bot key written to {}", path.display());
     Ok(())
 }
@@ -54,7 +63,7 @@ async fn current_key_is_valid(store: &Store, path: &Path) -> bool {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return false;
     };
-    // A scratch usage tracker: this check must not count as a key use.
+    // A fresh tracker: verify_key records one use, which is harmless here.
     let usage = KeyUsage::default();
     match verify_key(store, &usage, raw.trim()).await {
         Ok(info) => info.scopes.contains(&Scope::Delegate),
@@ -62,17 +71,40 @@ async fn current_key_is_valid(store: &Store, path: &Path) -> bool {
     }
 }
 
-/// Write `key` and a newline through a temp file in the same folder, then
-/// rename it into place. The file is created private (0600 on Unix).
-fn write_private(path: &Path, key: &str) -> anyhow::Result<()> {
+/// A private temp file in the folder of `path` (created if missing).
+fn temp_file_beside(path: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
     let dir = dir.unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).context("create temp key file")?;
-    writeln!(tmp, "{key}").context("write bot key")?;
-    tmp.flush().context("write bot key")?;
-    tmp.persist(path)
-        .map_err(|e| e.error)
-        .with_context(|| format!("write {}", path.display()))?;
+    tempfile::NamedTempFile::new_in(dir)
+        .with_context(|| format!("cannot write the bot key file {}", path.display()))
+}
+
+/// Write `key` and a newline, then rename the temp file onto `path`.
+fn write_and_rename(
+    mut tmp: tempfile::NamedTempFile,
+    path: &Path,
+    key: &str,
+) -> anyhow::Result<()> {
+    let ctx = || format!("cannot write the bot key file {}", path.display());
+    writeln!(tmp, "{key}").with_context(ctx)?;
+    tmp.flush().with_context(ctx)?;
+    tmp.as_file().sync_all().with_context(ctx)?;
+    tmp.persist(path).map_err(|e| e.error).with_context(ctx)?;
     Ok(())
+}
+
+/// Tighten a reused key file to 0600 (best effort, Unix only).
+fn make_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.permissions().mode() & 0o777 != 0o600
+        {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
