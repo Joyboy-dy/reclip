@@ -82,6 +82,38 @@ La page d'administration est sur `/admin`. Elle n'est liée nulle part sur le si
 
 Le jeton admin (`RECLIP_ADMIN_TOKEN`) et la commande `reclip-core keys` restent valables pour les scripts : la page admin ne les remplace pas.
 
+## Serveur MCP et WebMCP
+
+Le serveur MCP est sur `/mcp` (MCP en HTTP streamable). Il exige une clé API : `Authorization: Bearer rck_…`. Les droits et les limites de la clé sont appliqués comme sur l'API REST. La délégation Telegram n'est pas acceptée sur `/mcp`. Sans clé ou avec une clé invalide ou révoquée, la réponse est `401`.
+
+Créez une clé avec la commande `keys create` ci-dessus, ou sur la page `/admin`. Puis, pour Claude Code :
+
+```bash
+claude mcp add --transport http reclip https://reclip.example.com/mcp --header "Authorization: Bearer rck_…"
+```
+
+Pour Claude Desktop, l'écran de connecteur personnalisé accepte une URL et des réglages OAuth facultatifs, pas d'en-têtes personnalisés. Utilisez le pont `mcp-remote` dans `claude_desktop_config.json` :
+
+```json
+{
+  "mcpServers": {
+    "reclip": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://reclip.example.com/mcp", "--header", "Authorization:${RECLIP_AUTH}"],
+      "env": { "RECLIP_AUTH": "Bearer rck_xxxxxxxx_..." }
+    }
+  }
+}
+```
+
+La valeur de l'en-tête passe par une variable d'environnement, car certaines plateformes déforment les espaces dans les arguments.
+
+Pour un autre client : tout client qui peut envoyer un en-tête personnalisé se connecte directement. Un client qui n'en est pas capable ne peut pas utiliser `/mcp`.
+
+Les six outils (`probe_media`, `start_download`, `list_downloads`, `get_download`, `cancel_download`, `get_transcript`) sont aussi exposés par WebMCP sur la page publique, quand le navigateur gère l'API (Chrome, derrière un drapeau ou un origin trial). WebMCP n'utilise aucune clé : il agit avec le cookie du visiteur et ses limites. Les téléchargements lancés par un agent apparaissent sous forme de cartes sur la page, et le navigateur ne les enregistre pas automatiquement.
+
+`RECLIP_WEBMCP_TRIAL_TOKEN` (vide par défaut) : quand il est défini, chaque page HTML porte la balise `<meta http-equiv="origin-trial">` avec ce jeton. Il est fourni par le fournisseur du navigateur pour l'origin trial. Vide, aucune balise n'est ajoutée : WebMCP reste disponible dans les navigateurs où l'API est activée par un drapeau.
+
 ## Jeton admin
 
 L'API d'administration (`/api/v1/admin/keys`) est protégée par un jeton admin.

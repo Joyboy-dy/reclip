@@ -11,6 +11,21 @@ use super::not_found;
 use crate::app::AppState;
 
 const PLACEHOLDER: &str = "{{CSP_NONCE}}";
+const META_PLACEHOLDER: &str = "{{WEBMCP_META}}";
+
+/// The WebMCP origin-trial tag, or nothing without a token. The value is
+/// escaped for a double-quoted HTML attribute.
+fn webmcp_meta(token: Option<&str>) -> String {
+    let Some(token) = token else {
+        return String::new();
+    };
+    let value = token
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!("<meta http-equiv=\"origin-trial\" content=\"{value}\">")
+}
 
 /// CSP of an HTML page: like the default one, plus the response's nonce on
 /// styles. No `'unsafe-inline'`.
@@ -35,7 +50,11 @@ async fn page(state: &AppState, file: &str) -> Response {
         return not_found("Page not found");
     };
     let nonce = new_nonce();
-    let mut res = (StatusCode::OK, html.replace(PLACEHOLDER, &nonce)).into_response();
+    let meta = webmcp_meta(state.cfg.webmcp_trial_token.as_deref());
+    let html = html
+        .replace(PLACEHOLDER, &nonce)
+        .replace(META_PLACEHOLDER, &meta);
+    let mut res = (StatusCode::OK, html).into_response();
     let h = res.headers_mut();
     h.insert(
         header::CONTENT_TYPE,

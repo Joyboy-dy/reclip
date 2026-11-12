@@ -4,7 +4,8 @@ use std::path::Path;
 
 use tempfile::TempPath;
 
-use super::download_args::is_x_post;
+use super::download_args::{is_x_post, site_args};
+use super::subs::{FILE_STEM, META_PREFIX, escape_selector};
 use crate::config::Config;
 
 /// Arguments shared by every yt-dlp call. The cookies copy lives as long as
@@ -64,21 +65,79 @@ pub fn session_args_with(
     })
 }
 
-pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
-    if is_x_post(url) {
+/// A link that names a playlist and no single video: `probe_args` walks it
+/// with `--flat-playlist`, and a transcript refuses it.
+pub fn is_playlist_only(url: &str) -> bool {
+    let has_video = ["?v=", "&v=", "youtu.be/", "/shorts/", "/live/", "/embed/"]
+        .iter()
+        .any(|m| url.contains(m));
+    let has_list = url.contains("?list=") || url.contains("&list=");
+    !is_x_post(url) && has_list && !has_video
+}
+
+/// Probe arguments, with the same per-site fixes as downloads and transcripts
+/// (impersonation, Bilibili headers): a probe the site refuses blocks the
+/// download that follows it.
+pub fn probe_args(cfg: &Config, url: &str) -> Vec<String> {
+    let mut a: Vec<String> = if is_x_post(url) {
         // No --no-playlist: a multi-video post then prints one JSON per video.
-        ["-j", "--", url].map(String::from).to_vec()
+        vec!["-j".into()]
     } else if url.contains("list=") {
-        ["--flat-playlist", "-J", "--playlist-end"]
-            .map(String::from)
-            .into_iter()
-            .chain([playlist_limit.to_string(), "--".into(), url.to_string()])
-            .collect()
+        vec![
+            "--flat-playlist".into(),
+            "-J".into(),
+            "--playlist-end".into(),
+            cfg.playlist_limit.to_string(),
+        ]
     } else {
-        ["--no-playlist", "-j", "--", url]
-            .map(String::from)
-            .to_vec()
-    }
+        vec!["--no-playlist".into(), "-j".into()]
+    };
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
+}
+
+/// Pass 1 of a transcript: print the video's language and its subtitle and
+/// automatic caption tracks as one JSON line. Nothing is downloaded.
+pub fn meta_args(cfg: &Config, url: &str) -> Vec<String> {
+    let mut a: Vec<String> = ["--skip-download", "--no-playlist", "-I", "1", "--print"]
+        .map(String::from)
+        .to_vec();
+    a.push(format!(
+        "{META_PREFIX}%(.{{language,subtitles,automatic_captions}})j"
+    ));
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
+}
+
+/// Pass 2: write `<dir>/sub.<key>.vtt` (converted when the site has another
+/// format; `.srt` is also read), exactly that one track, without
+/// downloading the media.
+pub fn subs_args(cfg: &Config, url: &str, key: &str, dir: &Path) -> Vec<String> {
+    let mut a: Vec<String> = [
+        "--skip-download",
+        "--no-playlist",
+        "-I",
+        "1",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-format",
+        "vtt",
+        "--convert-subs",
+        "vtt",
+        "--sub-langs",
+    ]
+    .map(String::from)
+    .to_vec();
+    a.push(escape_selector(key));
+    a.extend([
+        "-o".into(),
+        dir.join(FILE_STEM).to_string_lossy().into_owned(),
+    ]);
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
 }
 
 pub use super::download_args::{DownloadOptions, download_args, format_name, format_selector};
@@ -156,14 +215,14 @@ mod tests {
     #[test]
     fn single_video_probe() {
         assert_eq!(
-            probe_args("https://youtube.com/watch?v=a", 50),
+            probe_args(&cfg(), "https://youtube.com/watch?v=a"),
             ["--no-playlist", "-j", "--", "https://youtube.com/watch?v=a"]
         );
     }
     #[test]
     fn playlist_urls_are_capped() {
         assert_eq!(
-            probe_args("https://youtube.com/watch?v=a&list=RDx", 50),
+            probe_args(&cfg(), "https://youtube.com/watch?v=a&list=RDx"),
             [
                 "--flat-playlist",
                 "-J",

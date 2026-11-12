@@ -1,0 +1,160 @@
+[
+  {
+    "name": "probe_media",
+    "description": "Look up a video or audio link without downloading it. Use it first to learn the title, duration, uploader and the available qualities (format ids); for a playlist or multi-video post it lists the entries instead.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "Link to the video, audio or playlist page.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "start_download",
+    "description": "Start downloading a video or audio link in the background and return the new download right away (state queued). Poll get_download with its id until the state is done, then use the file link it returns.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "clip": {
+          "additionalProperties": false,
+          "description": "Keep only a time range of the media.",
+          "properties": {
+            "end": {
+              "description": "End, in seconds. Omit to run to the end.",
+              "minimum": 0,
+              "type": "number"
+            },
+            "start": {
+              "description": "Start, in seconds.",
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "start"
+          ],
+          "type": "object"
+        },
+        "format": {
+          "default": "mp4",
+          "description": "Output format: mp4, mkv or mov for video; mp3, m4a, opus, flac or wav for audio only.",
+          "enum": [
+            "mp4",
+            "mkv",
+            "mov",
+            "mp3",
+            "m4a",
+            "opus",
+            "flac",
+            "wav"
+          ],
+          "type": "string"
+        },
+        "playlist_item": {
+          "description": "1-based item to download when the link is a multi-video post (see probe_media playlist entries).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "quality": {
+          "description": "A format id from probe_media (formats[].id) to pick a resolution. Omit for the best quality.",
+          "type": "string"
+        },
+        "strip_metadata": {
+          "default": false,
+          "description": "Remove title, author and other metadata from the output file.",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "Link to the video or audio page.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_downloads",
+    "description": "List the caller's recent downloads with their state (queued, downloading, processing, done, cancelled, failed, expired; in the browser (WebMCP) a download not yet started shows as pending or waiting) and progress. Use it to find a download id or to see what is still running.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_download",
+    "description": "Get one download's state, progress and error (in the browser (WebMCP) a download not yet started shows as pending or waiting). When the file is ready (state done) the result also carries a link to fetch it.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Download id, as returned by start_download or list_downloads.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "cancel_download",
+    "description": "Cancel a queued or running download. It has no effect on a download that already finished.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Download id, as returned by start_download or list_downloads.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_transcript",
+    "description": "Return a video's subtitles as plain text, without downloading the media: manual subtitles when they exist, otherwise automatic captions. Use it to read, summarize or search what is said. Fails with unavailable when the video has no subtitles.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "description": "BCP-47 language code such as en, fr or pt-BR. Default: the video's original language, then en.",
+          "pattern": "^[A-Za-z0-9-]{1,35}$",
+          "type": "string"
+        },
+        "url": {
+          "description": "Link to the video page.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
+  }
+]

@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse};
+use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse, Transcript};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::args::{
-    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
-    session_args,
+    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, meta_args,
+    probe_args, session_args, subs_args,
 };
 use super::download_args::is_x_post;
 use super::errors::classify;
@@ -19,6 +19,7 @@ use super::finalize::finalize;
 use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
+use super::subs::{TMP_PREFIX, available, choose, parse_tracks, read_track};
 use crate::config::Config;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -93,7 +94,7 @@ fn failure(cfg: &Config, out: &Captured) -> ApiError {
 }
 
 pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
-    let args = probe_args(url, cfg.playlist_limit);
+    let args = probe_args(cfg, url);
     let never = CancellationToken::new();
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
     if !out.status.success() {
@@ -110,6 +111,76 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     } else {
         Ok(ProbeResponse::Video(video_info(&json)))
     }
+}
+
+/// Subtitles of `url` as plain text, fetched without the media into a
+/// temporary directory under the data dir (always removed). `language` must
+/// already be validated. Pass 1 reads the video's language and tracks and
+/// picks one in Rust; pass 2 fetches exactly that track.
+pub async fn transcript(
+    cfg: &Config,
+    url: &str,
+    language: Option<&str>,
+) -> Result<Transcript, ApiError> {
+    let never = CancellationToken::new();
+    let meta = run(
+        cfg,
+        &meta_args(cfg, url),
+        PROBE_TIMEOUT,
+        usize::MAX,
+        |_| {},
+        &never,
+    )
+    .await?;
+    if !meta.status.success() {
+        return Err(failure(cfg, &meta));
+    }
+    let none = || err(ErrorCode::Unavailable, "No subtitles available");
+    let tracks = parse_tracks(&meta.stdout);
+    let Some(track) = choose(&tracks, language) else {
+        return Err(match (language, available(&tracks)) {
+            (Some(lang), keys) if !keys.is_empty() => err(
+                ErrorCode::Unavailable,
+                format!("No subtitles in {lang}. Available: {}", keys.join(", ")),
+            ),
+            _ => none(),
+        });
+    };
+    let root = cfg.data_dir.join("tmp");
+    let dir = tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&root)?;
+        tempfile::Builder::new()
+            .prefix(TMP_PREFIX)
+            .tempdir_in(&root)
+    })
+    .await
+    .map_err(|e| io_err(std::io::Error::other(e)))?
+    .map_err(io_err)?;
+    let args = subs_args(cfg, url, &track.key, dir.path());
+    let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
+    if !out.status.success() {
+        return Err(failure(cfg, &out));
+    }
+    let (path, key) = (dir.path().to_path_buf(), track.key.clone());
+    let read = tokio::task::spawn_blocking(move || read_track(&path, &key))
+        .await
+        .map_err(|e| io_err(std::io::Error::other(e)))?;
+    let Some(text) = read else {
+        // E.g. an HTTP 429 on the subtitle file: yt-dlp warns and exits 0.
+        tracing::warn!(stderr = %out.stderr.trim(), "subtitle track listed but not written");
+        return Err(err(
+            ErrorCode::Unavailable,
+            "Subtitles could not be downloaded, try again later",
+        ));
+    };
+    if text.is_empty() {
+        return Err(none());
+    }
+    Ok(Transcript {
+        language: track.key,
+        automatic: track.automatic,
+        text,
+    })
 }
 
 /// Download `url` into `job_dir`, reporting progress through `on_progress`.

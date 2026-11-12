@@ -17,6 +17,7 @@ use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
 use crate::http;
 use crate::jobs::JobManager;
+use crate::mcp;
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -58,6 +59,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/api/v1/config", get(http::config::get_config))
         .route("/api/v1/probe", post(http::probe::probe))
+        .route("/api/v1/transcript", post(http::transcript::get_transcript))
         .route(
             "/api/v1/jobs",
             get(http::jobs::list).post(http::jobs::create),
@@ -77,7 +79,25 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/history/{id}/thumb", get(http::history::thumb))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
-    // Admin routes carry their own token check, outside `caller_layer`.
+    // OAuth discovery (RFC 9728 / 8414) is not offered: answer JSON, not the SPA.
+    let app_oauth = Router::new()
+        .route(
+            "/.well-known/oauth-protected-resource",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/{*rest}",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server/{*rest}",
+            any(http::api_not_found),
+        );
+    // Admin routes and `/mcp` carry their own checks, outside `caller_layer`.
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/d/{token}", get(http::links::redeem))
@@ -89,6 +109,8 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/{*rest}", get(http::pages::admin))
         .merge(http::admin::routes(state.clone()))
         .merge(http::admin_session::routes())
+        .merge(mcp::routes(state.clone()))
+        .merge(app_oauth)
         .merge(api)
         .fallback_service(web)
         .with_state(state);

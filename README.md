@@ -19,6 +19,8 @@ https://github.com/user-attachments/assets/419d3e50-c933-444b-8cab-a9724986ba05
 - Cards restored after a page refresh
 - Fair download queue: global and per-site concurrency limits
 - Finished files kept for a set time (`RECLIP_FILE_TTL`), then deleted
+- Remote MCP server at `/mcp` for AI agents (see [Use with AI agents](#use-with-ai-agents))
+- WebMCP tools on the public page, for browsers that support them
 - Clean, responsive UI
 
 ## Quick Start
@@ -157,6 +159,50 @@ Errors:
 Responses also carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets).
 
 With `RECLIP_PUBLIC_WEB=false`, the whole API needs a key except `GET /api/v1/config`. Behind a reverse proxy, set `RECLIP_PUBLIC_URL` and make sure the proxy sends `X-Forwarded-Proto`, otherwise POST and DELETE requests from browsers are refused. With nginx, the default `proxy_set_header Host $proxy_host` without `X-Forwarded-Host` also triggers this 403 unless `RECLIP_PUBLIC_URL` is set. See [deploy/README.md](deploy/README.md) (in French) for the admin token, limits and proxy setup.
+
+## Use with AI agents
+
+ReClip offers the same six tools in two ways:
+
+- **MCP server** at `https://<domain>/mcp` (MCP over streamable HTTP). It needs an API key in the `Authorization: Bearer rck_…` header. The key's scopes and limits apply, as on the REST API. Telegram delegation is not accepted here.
+- **WebMCP** on the public page, when the browser exposes the WebMCP API (Chrome, behind a flag or origin trial). No key is used: the tools act with the visitor cookie and visitor limits. Downloads started by an agent appear as cards on the page. The browser does not save them automatically.
+
+| Tool | What it does |
+|---|---|
+| `probe_media` | Lists the formats of a link. |
+| `start_download` | Starts a download (`format`, `quality`, `clip`, `strip_metadata`, `playlist_item`). |
+| `list_downloads` | Lists downloads. |
+| `get_download` | Returns the state of a download. When the file is ready, returns its link. |
+| `cancel_download` | Cancels a download. |
+| `get_transcript` | Returns subtitles as plain text. No media file is downloaded. |
+
+Create a key with `docker compose exec core reclip-core keys create --name agent`, or on the `/admin` page.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http reclip https://reclip.example.com/mcp --header "Authorization: Bearer rck_xxxxxxxx_..."
+```
+
+Claude Desktop: its custom connector screen takes a URL and optional OAuth settings, not custom headers. Use the `mcp-remote` bridge in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "reclip": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://reclip.example.com/mcp", "--header", "Authorization:${RECLIP_AUTH}"],
+      "env": { "RECLIP_AUTH": "Bearer rck_xxxxxxxx_..." }
+    }
+  }
+}
+```
+
+The header value goes through an env var because some platforms mangle spaces in args.
+
+Other clients: any client that can send a custom header connects directly. A client that cannot send one cannot use `/mcp`.
+
+WebMCP needs no setup on your side, except the origin trial. Set `RECLIP_WEBMCP_TRIAL_TOKEN` to the token from the browser vendor. When it is set, every HTML page carries the origin-trial meta tag. When it is empty (the default), the page works as before.
 
 ## Development
 

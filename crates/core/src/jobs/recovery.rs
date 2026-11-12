@@ -48,6 +48,7 @@ pub(super) async fn remove_file(path: &Path) {
 pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
     let store = manager.store();
     let root = &manager.config().downloads_dir;
+    crate::ytdlp::subs::sweep_leftovers(&manager.config().data_dir);
 
     let interrupted = store.mark_interrupted(manager.config().file_ttl).await?;
 

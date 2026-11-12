@@ -47,6 +47,7 @@ hmac = "0.12"
 tower = { version = "0.5", features = ["util"] }
 tokio-util = "0.7"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+rmcp = { version = "3.9", default-features = false, features = ["server", "transport-streamable-http-server"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

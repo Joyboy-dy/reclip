@@ -2,7 +2,9 @@ use std::path::Path;
 
 use reclip_shared::{Clip, MediaFormat};
 
-use super::args::{DownloadOptions, download_args, probe_args};
+use super::args::{
+    DownloadOptions, download_args, is_playlist_only, meta_args, probe_args, subs_args,
+};
 use crate::config::Config;
 
 fn cfg() -> Config {
@@ -189,7 +191,70 @@ fn thumbnail_args() {
 #[test]
 fn x_probe_lists_every_video() {
     assert_eq!(
-        probe_args("https://x.com/u/status/1", 50),
+        probe_args(&cfg(), "https://x.com/u/status/1"),
         ["-j", "--", "https://x.com/u/status/1"]
     );
+}
+
+#[test]
+fn probes_keep_site_fixes() {
+    let ig = "https://www.instagram.com/reel/a/";
+    assert!(has(&probe_args(&cfg(), ig), ["--impersonate", "chrome"]));
+    let bili = "https://www.bilibili.com/video/BV1";
+    assert!(has(
+        &probe_args(&cfg(), bili),
+        ["--add-headers", "Referer:https://www.bilibili.com/"]
+    ));
+    let yt = probe_args(&cfg(), "https://youtube.com/watch?v=a");
+    assert!(!yt.contains(&"--impersonate".into()));
+    // The URL stays last, after "--".
+    let a = probe_args(&cfg(), ig);
+    assert_eq!(a[a.len() - 2..], ["--".to_string(), ig.to_string()]);
+}
+
+#[test]
+fn subtitle_calls_download_no_media_and_keep_site_fixes() {
+    let url = "https://www.bilibili.com/video/BV1";
+    let a = subs_args(&cfg(), url, "fr-FR", Path::new("/t"));
+    assert!(a.contains(&"--skip-download".to_string()));
+    assert!(has(&a, ["--sub-langs", r"fr\-FR"]));
+    assert!(has(&a, ["--sub-format", "vtt"]));
+    assert!(has(&a, ["--convert-subs", "vtt"]));
+    assert!(has(&a, ["-I", "1"]));
+    assert!(has(
+        &a,
+        ["--add-headers", "Referer:https://www.bilibili.com/"]
+    ));
+    assert_eq!(a[a.len() - 2..], ["--", url]);
+    let m = meta_args(&cfg(), url);
+    assert!(m.contains(&"--skip-download".to_string()));
+    assert!(has(&m, ["-I", "1"]));
+    assert!(m.iter().any(|x| x.starts_with("reclip-meta:")));
+    assert!(has(
+        &m,
+        ["--add-headers", "Origin:https://www.bilibili.com"]
+    ));
+}
+
+#[test]
+fn playlist_only_links_are_recognised() {
+    for yes in [
+        "https://www.youtube.com/playlist?list=PL1",
+        "https://www.youtube.com/channel/UC1/videos?list=PL1",
+    ] {
+        assert!(is_playlist_only(yes), "{yes}");
+    }
+    for no in [
+        "https://www.youtube.com/watch?v=a&list=PL1",
+        "https://www.youtube.com/watch?list=PL1&v=a",
+        "https://youtu.be/a?list=PL1",
+        "https://www.youtube.com/shorts/a?list=PL1",
+        "https://www.youtube.com/live/a?list=PL1",
+        "https://www.youtube.com/embed/a?list=PL1",
+        "https://example.com/video?playlist=1",
+        "https://www.youtube.com/watch?v=a",
+        "https://example.com/video",
+    ] {
+        assert!(!is_playlist_only(no), "{no}");
+    }
 }

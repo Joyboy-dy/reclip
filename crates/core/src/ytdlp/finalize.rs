@@ -51,7 +51,19 @@ pub fn ffmpeg_args(input: &Path, output: &Path, strip_metadata: bool) -> Option<
     a.push(input.into());
     a.extend(["-map", "0", "-dn", "-c", "copy"].map(OsString::from));
     if strip_metadata {
-        a.extend(["-map_metadata", "-1"].map(OsString::from));
+        // Global, stream and chapter tags; chapters themselves would survive
+        // as empty markers (and a dangling chapter track in mp4).
+        a.extend(
+            [
+                "-map_metadata",
+                "-1",
+                "-map_metadata:s",
+                "-1",
+                "-map_chapters",
+                "-1",
+            ]
+            .map(OsString::from),
+        );
     }
     if faststart {
         a.extend(["-movflags", "+faststart"].map(OsString::from));
@@ -145,7 +157,19 @@ mod tests {
     fn mp4_with_strip() {
         assert_eq!(
             argv("mp4", true).unwrap(),
-            expected("mp4", &["-map_metadata", "-1", "-movflags", "+faststart"])
+            expected(
+                "mp4",
+                &[
+                    "-map_metadata",
+                    "-1",
+                    "-map_metadata:s",
+                    "-1",
+                    "-map_chapters",
+                    "-1",
+                    "-movflags",
+                    "+faststart"
+                ]
+            )
         );
     }
     #[test]
@@ -160,7 +184,17 @@ mod tests {
         for ext in ["mkv", "webm", "m4a"] {
             assert_eq!(
                 argv(ext, true).unwrap(),
-                expected(ext, &["-map_metadata", "-1"])
+                expected(
+                    ext,
+                    &[
+                        "-map_metadata",
+                        "-1",
+                        "-map_metadata:s",
+                        "-1",
+                        "-map_chapters",
+                        "-1"
+                    ]
+                )
             );
         }
     }

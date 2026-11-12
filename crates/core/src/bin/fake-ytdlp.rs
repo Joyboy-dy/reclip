@@ -75,6 +75,14 @@ fn main() {
         }
         return;
     }
+    if args.iter().any(|a| a.starts_with("reclip-meta:")) {
+        subtitle_meta(&url);
+        return;
+    }
+    if flag("--write-subs") {
+        subtitles(&args, &url, template.expect("-o template"));
+        return;
+    }
     if flag("-j") {
         println!("WARNING: noise");
         println!(
@@ -160,4 +168,101 @@ fn partial(template: &str) {
         progress(&i.to_string(), "1000", "NA", "1000.0", "NA");
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+const MANUAL_VTT: &str = "WEBVTT
+Kind: captions
+
+1
+00:00:00.000 --> 00:00:02.000
+    <c.colorE5E5E5>Bonjour</c>
+";
+
+/// Rolling auto captions: every line is repeated by the next cue.
+const AUTO_VTT: &str = "WEBVTT
+Kind: captions
+Language: en
+
+    00:00:00.000 --> 00:00:02.000 align:start position:0%
+hello<00:00:00.500><c> world</c>
+
+    00:00:02.000 --> 00:00:02.010 align:start position:0%
+hello world
+
+    00:00:02.010 --> 00:00:04.000 align:start position:0%
+hello world
+second part
+
+    00:00:04.000 --> 00:00:04.010 align:start position:0%
+second part
+";
+
+/// (video language, uploaded tracks, automatic tracks) by URL keyword.
+fn tracks(
+    url: &str,
+) -> (
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+) {
+    match () {
+        () if url.contains("subs-manual") => ("en", &["de", "en"], &[]),
+        () if url.contains("subs-auto") => ("en", &[], &["en", "en-orig", "fr"]),
+        () if url.contains("subs-both") => ("fr", &["fr"], &["en-orig"]),
+        () if url.contains("subs-enus") => ("en", &["en-US"], &[]),
+        () if url.contains("subs-frfr") => ("fr", &["fr-FR"], &[]),
+        () if url.contains("subs-srt") => ("zh", &["zh"], &[]),
+        () if url.contains("subs-fr") => ("fr", &["fr"], &[]),
+        () if url.contains("subs-fail") => ("en", &["en"], &[]),
+        () if url.contains("subs-lost") => ("en", &["en"], &[]),
+        _ => ("en", &[], &[]),
+    }
+}
+
+/// Pass 1: the `--print` line with the language and the track keys.
+fn subtitle_meta(url: &str) {
+    let (language, manual, auto) = tracks(url);
+    let dict = |keys: &[&str]| -> serde_json::Value {
+        keys.iter()
+            .map(|k| (k.to_string(), serde_json::json!([])))
+            .collect()
+    };
+    let meta = serde_json::json!({
+        "language": language,
+        "subtitles": dict(manual),
+        "automatic_captions": dict(auto),
+    });
+    println!("reclip-meta:{meta}");
+}
+
+/// Pass 2 (`--write-subs`): writes `<template>.<key>.vtt` for the one track
+/// named by `--sub-langs` (regex-escaped), like yt-dlp. `subs-lost` writes
+/// nothing and warns, like a refused subtitle download.
+fn subtitles(args: &[String], url: &str, template: String) {
+    let langs = args
+        .windows(2)
+        .find(|w| w[0] == "--sub-langs")
+        .map_or("", |w| w[1].as_str());
+    let key = langs.replace('\\', "");
+    if url.contains("subs-fail") {
+        eprintln!("ERROR: [fake] subtitle download exploded");
+        exit(1);
+    }
+    if url.contains("subs-lost") {
+        eprintln!("WARNING: Unable to download video subtitles for '{key}': HTTP Error 429");
+        return;
+    }
+    let vtt = if tracks(url).1.contains(&key.as_str()) {
+        MANUAL_VTT
+    } else {
+        AUTO_VTT
+    };
+    if url.contains("subs-srt") {
+        // A site without WebVTT whose conversion did not run: yt-dlp keeps
+        // the original format.
+        let srt = "1\n00:00:00,000 --> 00:00:01,000\nni hao\n\n";
+        std::fs::write(format!("{template}.{key}.srt"), srt).unwrap();
+        return;
+    }
+    std::fs::write(format!("{template}.{key}.vtt"), vtt).unwrap();
 }
