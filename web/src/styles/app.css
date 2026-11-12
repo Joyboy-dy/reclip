@@ -43,6 +43,9 @@
     background: var(--color-bg);
     color: var(--color-fg);
     font-family: var(--font-mono);
+  }
+  /* On body only: html keeps 16px so rem-based utilities (text-xs, spacing) match the mockups' px values. */
+  body {
     font-size: 13px;
   }
   a {

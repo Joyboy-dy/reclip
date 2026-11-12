@@ -1,4 +1,14 @@
-import type { CreateJobRequest, ErrorCode, Job, ProbeResponse, PublicConfig } from "./types.gen";
+import type {
+  CreateJobRequest,
+  ErrorCode,
+  HistoryClean,
+  HistoryCleanResult,
+  HistoryEntry,
+  HistoryList,
+  Job,
+  ProbeResponse,
+  PublicConfig,
+} from "./types.gen";
 
 export class ApiFailure extends Error {
   constructor(
@@ -61,3 +71,14 @@ export const deleteJob = async (id: string): Promise<void> => {
   await send(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
 };
 export const eventsUrl = (id: string): string => `/api/v1/jobs/${encodeURIComponent(id)}/events`;
+export const resumeJob = (id: string): Promise<Job> =>
+  postJson(`/api/v1/jobs/${encodeURIComponent(id)}/resume`, {});
+
+export const listHistory = async (): Promise<HistoryEntry[]> =>
+  (await request<HistoryList>("/api/v1/history")).entries;
+export const removeHistory = async (id: string): Promise<void> => {
+  await send(`/api/v1/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+};
+export const cleanHistory = (req: HistoryClean): Promise<HistoryCleanResult> =>
+  postJson("/api/v1/history/clean", req);
+export const historyThumbUrl = (id: string): string => `/api/v1/history/${encodeURIComponent(id)}/thumb`;

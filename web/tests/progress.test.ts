@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 import { ApiFailure } from "../src/api/client";
 import type { Job } from "../src/api/types.gen";
 import { followJob } from "../src/progress";
-import { formatProgress } from "../src/ui/progress-bar";
+import { formatProgress, progressWidth } from "../src/public/format";
 
 const job = (state: Job["state"], progress: number | null = null): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: null, title: null, thumbnail: null,
   state, filename: null, size: null, error: null, progress, speed: null, eta: null,
-  created_at: "2026-01-01T00:00:00Z", expires_at: null,
+  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false,
 });
 
 class FakeES {
@@ -71,11 +71,19 @@ test("the stop function silences further events and polling", async () => {
 });
 
 test("formatProgress", () => {
-  expect(formatProgress({ progress: 42.4, speed: 3_250_000, eta: 12 })).toBe("42 % · 3.1 MB/s · 0:12");
-  expect(formatProgress({ progress: 5, speed: 500_000, eta: 3725 })).toBe("5 % · 488 KB/s · 1:02:05");
-  expect(formatProgress({ progress: 50, speed: null, eta: null })).toBe("50 %");
+  expect(formatProgress({ progress: 42.4, speed: 3_250_000, eta: 18 })).toBe("42% · 3.1 MB/s · 0:18 left");
+  expect(formatProgress({ progress: 5, speed: 500_000, eta: 3725 })).toBe("5% · 488 KB/s · 1:02:05 left");
+  expect(formatProgress({ progress: 50, speed: null, eta: null })).toBe("50%");
+  expect(formatProgress({})).toBe("Starting...");
   expect(formatProgress({ progress: null, speed: null, eta: null, state: "queued" })).toBe("Queued");
   expect(formatProgress({ progress: 99.9, speed: 1, eta: 1, state: "processing" })).toBe("Processing");
+});
+
+test("progressWidth is clamped and full while processing", () => {
+  expect(progressWidth({ progress: 42 })).toBe(42);
+  expect(progressWidth({ progress: 140 })).toBe(100);
+  expect(progressWidth({ progress: null })).toBe(0);
+  expect(progressWidth({ progress: 10, state: "processing" })).toBe(100);
 });
 
 test("polling failure after an SSE error is reported once through onError", async () => {
