@@ -76,7 +76,7 @@ Options de `keys create` :
 
 - `--scopes probe,jobs:create,jobs:read,jobs:cancel` : droits de la clé (c'est la valeur par défaut). Le droit `delegate` s'ajoute explicitement.
 - `--unlimited` : la clé n'est pas soumise aux limites.
-- `--expires-days N` : la clé expire après N jours.
+- `--expires-days N` : la clé expire après N jours (de 1 à 36500).
 
 Utilisation :
 
@@ -84,11 +84,13 @@ Utilisation :
 curl -H "Authorization: Bearer rck_xxxxxxxx_..." https://reclip.example.com/api/v1/jobs
 ```
 
+Seul le schéma `Bearer` compte comme une clé. Un en-tête `Authorization` d'un autre type (par exemple les identifiants Basic transmis par un proxy) est ignoré : la requête est traitée comme celle d'un visiteur.
+
 Le droit `delegate` permet à un bot d'agir pour des utilisateurs Telegram avec l'en-tête `X-Reclip-On-Behalf-Of: tg:<id>`. Attention : toute clé `delegate` voit les tâches de tous les utilisateurs `tg:*`. Ne la donnez qu'à votre propre bot.
 
 Mode privé : avec `RECLIP_PUBLIC_WEB=false`, toute l'API exige une clé, sauf `GET /api/v1/config`.
 
-Erreurs : `401 unauthorized` (clé absente ou invalide), `403 forbidden` (droit manquant) ou `403 forbidden_target` (adresse refusée), `429 rate_limited` (voir Limites).
+Erreurs : `401 unauthorized` (clé invalide, expirée ou révoquée, requête sans clé en mode privé, mauvais jeton admin), `403 forbidden` (droit manquant, délégation refusée faute du droit `delegate`, ou requête sans clé dont l'en-tête Origin manque ou désigne un autre site), `403 forbidden_target` (adresse refusée), `429 rate_limited` (voir Limites).
 
 Liens signés : `POST /api/v1/jobs/{id}/link` renvoie `{url, expires_at}`. L'adresse `GET /d/{token}` se télécharge sans clé et expire après `RECLIP_LINK_TTL` secondes (défaut `21600`) ou avec le fichier.
 
@@ -102,17 +104,19 @@ Chaque appelant a trois limites : analyses par minute, tâches créées par heur
 | `KEY` (clé API) | 120 | 200 | 100 |
 | `TG` (bot Telegram) | 30 | 40 | 10 |
 
-Les variables se nomment `RECLIP_LIMIT_<TYPE>_PROBES_PER_MIN`, `RECLIP_LIMIT_<TYPE>_JOBS_PER_HOUR` et `RECLIP_LIMIT_<TYPE>_ACTIVE`. La valeur `0` supprime la limite. Une clé créée avec `--unlimited` n'est pas limitée.
+Les variables se nomment `RECLIP_LIMIT_<TYPE>_PROBES_PER_MIN`, `RECLIP_LIMIT_<TYPE>_JOBS_PER_HOUR` et `RECLIP_LIMIT_<TYPE>_ACTIVE`. La valeur `0` supprime la limite. Une clé créée avec `--unlimited` n'est pas limitée. Les visiteurs du navigateur sont comptés par adresse IP (par préfixe /64 en IPv6).
 
-Au-delà d'une limite, l'API répond `429 rate_limited` avec les en-têtes `Retry-After`, `RateLimit-Limit`, `RateLimit-Remaining` et `RateLimit-Reset`.
+Au-delà d'une limite, l'API répond `429 rate_limited` avec les en-têtes `Retry-After`, `RateLimit-Limit`, `RateLimit-Remaining` et `RateLimit-Reset`. Quand `Retry-After` ne dépasse pas 120 secondes, l'interface web attend puis réessaie, jusqu'à 3 fois.
 
 ## Adresse publique et proxy
 
 Derrière un proxy inverse (Traefik sur Dokploy, nginx, Caddy), ReClip ne croit les en-têtes `X-Forwarded-*` que s'ils viennent d'une adresse de `RECLIP_TRUSTED_PROXIES` (par défaut : loopback et réseaux privés).
 
-- Définissez `RECLIP_PUBLIC_URL` (ex. `https://reclip.example.com`). C'est le réglage recommandé.
+- Définissez `RECLIP_PUBLIC_URL` (ex. `https://reclip.example.com`). C'est le réglage recommandé. Schéma et hôte seulement, sans chemin : sinon elle est ignorée et un WARN est écrit dans les logs.
 - Si elle est vide, ReClip l'apprend à la première requête passée par un proxy de confiance (`X-Forwarded-Proto` et `X-Forwarded-Host`), écrit un WARN dans les logs et ne s'en sert que pour les liens signés.
 - Le proxy doit envoyer `X-Forwarded-Proto` (Traefik et Dokploy le font). Sinon, définissez `RECLIP_PUBLIC_URL`, faute de quoi les requêtes POST et DELETE des visiteurs sont refusées (contrôle du schéma de l'en-tête Origin).
+- Avec nginx, le réglage par défaut `proxy_set_header Host $proxy_host` sans `X-Forwarded-Host` provoque aussi ce refus (403), sauf si `RECLIP_PUBLIC_URL` est définie.
+- Avec Cloudflare devant Traefik, configurez `forwardedHeaders.trustedIPs` de Traefik avec les plages d'adresses de Cloudflare. Sinon, l'adresse vue est celle du nœud Cloudflare et les visiteurs qui passent par lui partagent les mêmes limites.
 
 Pour voir ou effacer l'adresse apprise :
 
@@ -125,11 +129,7 @@ Redémarrez le conteneur après `url reset`. Si `RECLIP_PUBLIC_URL` est définie
 
 ## Utilisation de l'API en ligne de commande
 
-L'API rattache les tâches à un cookie anonyme `reclip_client`. Un script `curl` doit donc conserver ses cookies d'une requête à l'autre, sinon il ne retrouvera pas ses tâches :
-
-```bash
-curl -c cookies.txt -b cookies.txt http://localhost:8899/api/v1/jobs
-```
+Les scripts et les agents utilisent une clé API (voir « Clés API » ci-dessus et la section « API for agents » du README principal). Sans clé, l'API traite l'appelant comme un navigateur : les requêtes POST et DELETE exigent un en-tête Origin qui désigne le site, donc un simple `curl` reçoit `403 forbidden`.
 
 ## Mise à jour de yt-dlp
 

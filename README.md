@@ -56,7 +56,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `86400` |
 | `RECLIP_CLEANUP_INTERVAL` | Period of the expiry sweep, in seconds. | `600` |
 | `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
-| `RECLIP_PUBLIC_URL` | Public address behind a reverse proxy, e.g. `https://reclip.example.com`. Used for signed links. If unset, it is learned from the first proxied request. | none |
+| `RECLIP_PUBLIC_URL` | Public address behind a reverse proxy, e.g. `https://reclip.example.com`: scheme and host only, no path (otherwise it is ignored with a warning). Used for signed links and the `Origin` check. If unset, it is learned from the first proxied request (signed links only). | none |
 | `RECLIP_TRUSTED_PROXIES` | Comma-separated IPs or CIDR ranges whose `X-Forwarded-*` headers are trusted. | loopback and private ranges |
 | `RECLIP_ADMIN_TOKEN` | Token for the admin API (32 random characters or more). If unset, one is generated at first start and printed once in the logs. | generated |
 | `RECLIP_PUBLIC_WEB` | `false` turns on private mode: the whole API needs a key, except `GET /api/v1/config`. | `true` |
@@ -64,7 +64,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_LIMIT_<TIER>_<LIMIT>` | Rate limits. `TIER` is `WEB`, `KEY` or `TG`; `LIMIT` is `PROBES_PER_MIN`, `JOBS_PER_HOUR` or `ACTIVE`. `0` means unlimited. | see below |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
 
-Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 300 / 200, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10.
+Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 300 / 200, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10. Browser visitors are counted per IP address (per /64 prefix for IPv6). When a download is refused with a `Retry-After` of 120 seconds or less, the web UI waits and retries, up to 3 times.
 
 The downloads directory belongs to ReClip: at startup it deletes the job folders (32 hex characters) it no longer knows, so give it a dedicated folder.
 
@@ -92,11 +92,7 @@ Progress updates live. You can cancel a running download or remove a card, and c
 
 ### Using the API
 
-Jobs are attached to an anonymous `reclip_client` cookie set by the server. A script must keep cookies between requests, or it will not see its own jobs:
-
-```bash
-curl -c cookies.txt -b cookies.txt http://localhost:8899/api/v1/jobs
-```
+Scripts and agents use an API key: see [API for agents](#api-for-agents). Without a key, the API treats the caller as a browser: POST and DELETE requests need an `Origin` header naming this site, so a plain `curl` gets `403 forbidden`.
 
 ## API for agents
 
@@ -106,7 +102,7 @@ Scripts and bots use API keys instead of the browser cookie. Create one inside t
 docker compose exec core reclip-core keys create --name agent
 ```
 
-Options: `--scopes probe,jobs:create,jobs:read,jobs:cancel` (the default set; `delegate` lets a bot act for Telegram users and must be added explicitly), `--unlimited`, `--expires-days N`. Also `keys list` and `keys revoke <id>`. Keys look like `rck_<id>_<secret>` and go in the `Authorization` header. The examples use a placeholder host and key:
+Options: `--scopes probe,jobs:create,jobs:read,jobs:cancel` (the default set; `delegate` lets a bot act for Telegram users and must be added explicitly), `--unlimited`, `--expires-days N` (1 to 36500). Also `keys list` and `keys revoke <id>`. Keys look like `rck_<id>_<secret>` and go in the `Authorization: Bearer` header. Other schemes (such as Basic credentials forwarded by a proxy) are ignored: the request is handled as a browser visitor. The examples use a placeholder host and key:
 
 ```bash
 export RECLIP=https://reclip.example.com
@@ -143,14 +139,14 @@ Errors:
 
 | Status | Code | Meaning |
 |---|---|---|
-| 401 | `unauthorized` | Missing, invalid, expired or revoked key. |
-| 403 | `forbidden` | The key lacks the scope. |
+| 401 | `unauthorized` | Invalid, expired or revoked key; no key in private mode; wrong admin token on the admin API. |
+| 403 | `forbidden` | The key lacks the scope, the key cannot act for users (no `delegate`), or a request without a key came with a cross-site or missing `Origin`. |
 | 403 | `forbidden_target` | The URL points to a private or internal address. |
 | 429 | `rate_limited` | Over a limit. `Retry-After` gives the wait in seconds. |
 
 Responses also carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets).
 
-With `RECLIP_PUBLIC_WEB=false`, the whole API needs a key except `GET /api/v1/config`. Behind a reverse proxy, set `RECLIP_PUBLIC_URL` and make sure the proxy sends `X-Forwarded-Proto`, otherwise POST and DELETE requests from browsers are refused. See [deploy/README.md](deploy/README.md) (in French) for the admin token, limits and proxy setup.
+With `RECLIP_PUBLIC_WEB=false`, the whole API needs a key except `GET /api/v1/config`. Behind a reverse proxy, set `RECLIP_PUBLIC_URL` and make sure the proxy sends `X-Forwarded-Proto`, otherwise POST and DELETE requests from browsers are refused. With nginx, the default `proxy_set_header Host $proxy_host` without `X-Forwarded-Host` also triggers this 403 unless `RECLIP_PUBLIC_URL` is set. See [deploy/README.md](deploy/README.md) (in French) for the admin token, limits and proxy setup.
 
 ## Development
 
