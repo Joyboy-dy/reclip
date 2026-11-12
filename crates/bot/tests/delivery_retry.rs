@@ -66,6 +66,21 @@ async fn link_failure_keeps_tracking_until_the_link_is_sent() {
 }
 
 #[tokio::test]
+async fn after_the_download_retries_only_the_link_is_retried() {
+    let e = env(core("My clip", vec![done(Some(10))], 10));
+    let downloads = std::iter::repeat_with(unreachable).take(6);
+    e.app.core.download_errors.lock().unwrap().extend(downloads);
+    let links = [unreachable(), unreachable()];
+    e.app.core.link_errors.lock().unwrap().extend(links);
+    send(&e.app, mp3(1)).await;
+    // Five failed downloads, then never again: no re-download per retry.
+    assert_eq!(e.app.core.downloads.lock().unwrap().len(), 5);
+    assert!(audio_names(&e).is_empty(), "no file after giving up");
+    assert_eq!(e.app.core.links.lock().unwrap().len(), 1, "one link sent");
+    assert!(e.app.state.snapshot().is_empty());
+}
+
+#[tokio::test]
 async fn link_404_drops_the_job_as_expired() {
     let e = env(core("My clip", vec![done(Some(5000))], 0));
     e.app

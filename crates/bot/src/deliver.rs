@@ -68,6 +68,11 @@ pub async fn deliver<T: Telegram + 'static, C: Core + 'static>(
         tracing::info!(job = %t.job_id, size, "too big to upload, sending a link");
         return send_link(app, t, LinkReason::TooBig(Some(size))).await;
     }
+    // The download already failed this many times: only the link is retried
+    // from now on, instead of moving the whole file again every cycle.
+    if retries >= MAX_DOWNLOAD_RETRIES {
+        return send_link(app, t, LinkReason::SendFailed).await;
+    }
     // Registered before the edit: a Cancel pressed meanwhile stops it.
     let running = app.deliveries.start(&t.job_id);
     if retries == 0
