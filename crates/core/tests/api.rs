@@ -1,105 +1,13 @@
+mod common;
+
 use std::time::Duration;
 
-use reclip_core::app::{AppState, router};
-use reclip_core::config::Config;
-use reclip_core::store::Store;
+use common::{TestServer, Visitor};
 use reqwest::Response;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
-struct Server {
-    visitor: Visitor,
-    store: Store,
-    _dirs: (tempfile::TempDir, tempfile::TempDir),
-}
-
-impl std::ops::Deref for Server {
-    type Target = Visitor;
-    fn deref(&self) -> &Visitor {
-        &self.visitor
-    }
-}
-
-/// One anonymous browser: its own cookie jar.
-struct Visitor {
-    base: String,
-    client: reqwest::Client,
-}
-
-async fn start() -> Server {
-    let downloads = tempfile::tempdir().unwrap();
-    let web = tempfile::tempdir().unwrap();
-    std::fs::write(web.path().join("index.html"), "<h1>ReClip</h1>").unwrap();
-    let mut cfg = Config::from_env(&|_| None);
-    cfg.ytdlp_bin = env!("CARGO_BIN_EXE_fake-ytdlp").to_string();
-    cfg.downloads_dir = downloads.path().to_path_buf();
-    cfg.web_dir = web.path().to_path_buf();
-    cfg.job_timeout = Duration::from_secs(5);
-    let store = Store::memory().await;
-    let state = AppState::new(Arc::new(cfg), store.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
-    Server {
-        visitor: Visitor::new(&base),
-        store,
-        _dirs: (downloads, web),
-    }
-}
-
-impl Visitor {
-    fn new(base: &str) -> Visitor {
-        Visitor {
-            base: base.to_string(),
-            client: reqwest::Client::builder()
-                .cookie_store(true)
-                .build()
-                .unwrap(),
-        }
-    }
-    async fn post(&self, path: &str, body: Value) -> Response {
-        self.client
-            .post(format!("{}{path}", self.base))
-            .json(&body)
-            .send()
-            .await
-            .unwrap()
-    }
-    async fn get(&self, path: &str) -> Response {
-        self.client
-            .get(format!("{}{path}", self.base))
-            .send()
-            .await
-            .unwrap()
-    }
-    async fn wait_job(&self, id: &str, want: &str) -> Value {
-        for _ in 0..50 {
-            let j: Value = self
-                .get(&format!("/api/v1/jobs/{id}"))
-                .await
-                .json()
-                .await
-                .unwrap();
-            if j["state"] == want {
-                return j;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        panic!("job never reached {want}");
-    }
-    async fn create(&self, url: &str) -> String {
-        let r = self
-            .post(
-                "/api/v1/jobs",
-                json!({"url": url, "format": "mp4", "title": "Fake ✨ / video"}),
-            )
-            .await;
-        assert_eq!(r.status(), 202);
-        r.json::<Value>().await.unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
+async fn start() -> TestServer {
+    TestServer::start(|c| c.job_timeout = Duration::from_secs(5)).await
 }
 
 #[tokio::test]
@@ -180,7 +88,7 @@ async fn failed_job_reports_code_and_cleans_dir() {
     let id = s.create("https://error-bot").await;
     let j = s.wait_job(&id, "failed").await;
     assert_eq!(j["error"]["code"], "bot_check");
-    assert!(!s._dirs.0.path().join(&id).exists());
+    assert!(!s.downloads.join(&id).exists());
     let r = s.get(&format!("/api/v1/jobs/{id}/file")).await;
     assert_eq!(r.status(), 404);
 }

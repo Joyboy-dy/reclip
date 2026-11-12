@@ -1,12 +1,15 @@
 //! Router assembly and shared state.
 
 use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::routing::{any, get, post};
 use axum::{Router, middleware};
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::access::caller::caller_layer;
+use crate::access::limits::Limiter;
 use crate::config::Config;
 use crate::http;
 use crate::jobs::JobManager;
@@ -17,12 +20,18 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub store: Store,
     pub jobs: JobManager,
+    pub limiter: Limiter,
 }
 
 impl AppState {
     pub fn new(cfg: Arc<Config>, store: Store) -> AppState {
         let jobs = JobManager::new(cfg.clone(), store.clone());
-        AppState { cfg, store, jobs }
+        AppState {
+            cfg,
+            store,
+            jobs,
+            limiter: Limiter::new(),
+        }
     }
 }
 
@@ -44,7 +53,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/cancel", post(http::jobs::cancel))
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
         .route("/api/{*rest}", any(http::api_not_found))
-        .layer(middleware::from_fn(http::identity::identity_layer));
+        .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(api)
@@ -65,6 +74,7 @@ pub async fn serve(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
     let stop = jobs.clone();
+    let app = app.into_make_service_with_connect_info::<SocketAddr>();
     let res = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             signal.await;

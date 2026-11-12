@@ -1,10 +1,12 @@
 //! Startup recovery and periodic expiry, against the fake yt-dlp.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use reclip_core::app::{AppState, router};
+use common::TestServer;
 use reclip_core::config::Config;
 use reclip_core::jobs::{JobManager, cleanup, recovery};
 use reclip_core::store::Store;
@@ -129,42 +131,28 @@ async fn recover_removes_orphan_dirs() {
 
 #[tokio::test]
 async fn cleanup_expires_and_deletes_files() {
-    let downloads = tempfile::tempdir().unwrap();
-    let mut cfg = config(downloads.path());
-    cfg.file_ttl = Duration::from_secs(1);
-    cfg.cleanup_interval = Duration::from_millis(200);
-    let web = tempfile::tempdir().unwrap();
-    cfg.web_dir = web.path().to_path_buf();
-    let state = AppState::new(Arc::new(cfg), Store::memory().await);
-    let mgr = state.jobs.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
+    let s = TestServer::start(|c| {
+        c.file_ttl = Duration::from_secs(1);
+        c.cleanup_interval = Duration::from_millis(200);
+    })
+    .await;
+    let mgr = s.jobs.clone();
     let cleaner = cleanup::spawn_cleanup(mgr.clone());
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
 
     let body = json!({"url": "https://example.com/v", "format": "mp4"});
-    let r = client
-        .post(format!("{base}/api/v1/jobs"))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
+    let r = s.post("/api/v1/jobs", body).await;
     let id = r.json::<Value>().await.unwrap()["id"]
         .as_str()
         .unwrap()
         .to_string();
-    let url = format!("{base}/api/v1/jobs/{id}");
+    let url = format!("/api/v1/jobs/{id}");
     wait_for("expired", async || {
-        let j: Value = client.get(&url).send().await.unwrap().json().await.unwrap();
+        let j: Value = s.get(&url).await.json().await.unwrap();
         j["state"] == "expired"
     })
     .await;
-    assert!(!downloads.path().join(&id).exists());
-    let r = client.get(format!("{url}/file")).send().await.unwrap();
+    assert!(!s.downloads.join(&id).exists());
+    let r = s.get(&format!("{url}/file")).await;
     assert_eq!(r.status(), 404);
 
     mgr.shutdown().await;

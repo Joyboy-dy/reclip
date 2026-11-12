@@ -3,7 +3,6 @@
 pub mod config;
 pub mod events;
 pub mod files;
-pub mod identity;
 pub mod jobs;
 pub mod probe;
 
@@ -55,6 +54,12 @@ pub fn not_found(message: &str) -> Response {
 
 pub async fn api_not_found() -> Response {
     not_found("Unknown API route")
+}
+
+impl From<HttpError> for ManagerError {
+    fn from(e: HttpError) -> Self {
+        ManagerError::Api(e.0)
+    }
 }
 
 impl IntoResponse for ManagerError {
