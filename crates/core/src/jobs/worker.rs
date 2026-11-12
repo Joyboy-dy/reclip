@@ -236,6 +236,10 @@ async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String,
         .await;
     match written {
         Ok(expires_at) => done.expires_at = Some(expires_at),
+        // A job deleted while it ran has no row left: nothing to record.
+        Err(e) if matches!(mgr.store().owner_of(&done.id).await, Ok(None)) => {
+            tracing::debug!(job = %done.id, error = %e, "job deleted, result not recorded");
+        }
         Err(e) => tracing::error!(job = %done.id, error = %e, "cannot record job result"),
     }
     done.resumable = is_resumable(done.state, done.error.as_ref(), done.expires_at.as_deref());
