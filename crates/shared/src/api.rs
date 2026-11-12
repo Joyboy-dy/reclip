@@ -193,3 +193,24 @@ pub struct LinkResponse {
     /// RFC 3339 timestamp.
     pub expires_at: String,
 }
+
+/// Body of `POST /api/v1/transcript`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct TranscriptRequest {
+    pub url: String,
+    /// BCP-47 code (`en`, `pt-BR`). Default: the original language, then `en`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub language: Option<String>,
+}
+
+/// A video's subtitles as plain text.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct Transcript {
+    /// Language code of the subtitles that were found.
+    pub language: String,
+    /// True for auto-generated captions, false for uploaded subtitles.
+    pub automatic: bool,
+    /// One caption line per line, no timestamps.
+    pub text: String,
+}

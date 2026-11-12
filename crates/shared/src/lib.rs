@@ -4,6 +4,7 @@ pub mod admin;
 pub mod api;
 pub mod errors;
 pub mod history;
+pub mod tools;
 
 pub use admin::*;
 pub use api::*;

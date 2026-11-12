@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse};
+use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse, Transcript};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::args::{
     DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
-    session_args,
+    session_args, subs_args,
 };
 use super::download_args::is_x_post;
 use super::errors::classify;
@@ -19,6 +19,7 @@ use super::finalize::finalize;
 use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
+use super::subs::{find_transcript, manual_languages};
 use crate::config::Config;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -110,6 +111,30 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     } else {
         Ok(ProbeResponse::Video(video_info(&json)))
     }
+}
+
+/// Subtitles of `url` as plain text, fetched without the media into a
+/// temporary directory under the data dir (always removed). `language` must
+/// already be validated; `None` means the original language, then English.
+pub async fn transcript(
+    cfg: &Config,
+    url: &str,
+    language: Option<&str>,
+) -> Result<Transcript, ApiError> {
+    let root = cfg.data_dir.join("tmp");
+    std::fs::create_dir_all(&root).map_err(io_err)?;
+    let dir = tempfile::Builder::new()
+        .prefix("subs-")
+        .tempdir_in(&root)
+        .map_err(io_err)?;
+    let args = subs_args(cfg, url, language, dir.path());
+    let never = CancellationToken::new();
+    let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
+    if !out.status.success() {
+        return Err(failure(cfg, &out));
+    }
+    find_transcript(dir.path(), &manual_languages(&out.stdout))
+        .ok_or_else(|| err(ErrorCode::Unavailable, "No subtitles available"))
 }
 
 /// Download `url` into `job_dir`, reporting progress through `on_progress`.

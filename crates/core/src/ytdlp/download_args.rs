@@ -145,6 +145,22 @@ pub fn download_args(
     if let Some(clip) = &opts.clip {
         a.extend(["--download-sections".into(), section(clip)]);
     }
+    a.extend(site_args(cfg, url));
+    a.extend([
+        "--max-filesize".into(),
+        cfg.max_filesize.clone(),
+        "--match-filter".into(),
+        format!("!is_live & duration <=? {}", cfg.max_duration),
+        "--".into(),
+        url.into(),
+    ]);
+    a
+}
+
+/// Per-site fixes shared by every call that fetches `url`: impersonation for
+/// the hosts that need it and the Bilibili referer headers.
+pub(super) fn site_args(cfg: &Config, url: &str) -> Vec<String> {
+    let mut a = Vec::new();
     if let Some(target) = cfg
         .impersonate
         .as_deref()
@@ -160,13 +176,5 @@ pub fn download_args(
             a.extend(["--add-headers".into(), h.into()]);
         }
     }
-    a.extend([
-        "--max-filesize".into(),
-        cfg.max_filesize.clone(),
-        "--match-filter".into(),
-        format!("!is_live & duration <=? {}", cfg.max_duration),
-        "--".into(),
-        url.into(),
-    ]);
     a
 }

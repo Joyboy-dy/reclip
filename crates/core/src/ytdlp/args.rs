@@ -4,7 +4,8 @@ use std::path::Path;
 
 use tempfile::TempPath;
 
-use super::download_args::is_x_post;
+use super::download_args::{is_x_post, site_args};
+use super::subs::{DEFAULT_LANGS, FILE_STEM, MANUAL_PREFIX};
 use crate::config::Config;
 
 /// Arguments shared by every yt-dlp call. The cookies copy lives as long as
@@ -79,6 +80,30 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
             .map(String::from)
             .to_vec()
     }
+}
+
+/// yt-dlp arguments that write `<dir>/sub.<lang>.vtt` for `url` without
+/// downloading the media, and print the uploaded subtitle languages.
+pub fn subs_args(cfg: &Config, url: &str, language: Option<&str>, dir: &Path) -> Vec<String> {
+    let mut a: Vec<String> = [
+        "--skip-download",
+        "--no-playlist",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+    ]
+    .map(String::from)
+    .to_vec();
+    a.push(language.unwrap_or(DEFAULT_LANGS).into());
+    a.extend(["--sub-format", "vtt", "--no-simulate", "--print"].map(String::from));
+    a.push(format!("{MANUAL_PREFIX}%(subtitles)j"));
+    a.extend([
+        "-o".into(),
+        dir.join(FILE_STEM).to_string_lossy().into_owned(),
+    ]);
+    a.extend(site_args(cfg, url));
+    a.extend(["--".into(), url.into()]);
+    a
 }
 
 pub use super::download_args::{DownloadOptions, download_args, format_name, format_selector};

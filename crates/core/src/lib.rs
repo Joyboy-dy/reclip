@@ -8,4 +8,5 @@ pub mod healthcheck;
 pub mod http;
 pub mod jobs;
 pub mod store;
+pub mod transcript;
 pub mod ytdlp;

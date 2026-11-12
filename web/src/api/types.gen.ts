@@ -165,3 +165,23 @@ export type HistoryClean = { mode: HistoryCleanMode,
 days?: number, };
 
 export type HistoryCleanResult = { removed: number, };
+
+export type TranscriptRequest = { url: string, 
+/**
+ * BCP-47 code (`en`, `pt-BR`). Default: the original language, then `en`.
+ */
+language?: string | null, };
+
+export type Transcript = { 
+/**
+ * Language code of the subtitles that were found.
+ */
+language: string, 
+/**
+ * True for auto-generated captions, false for uploaded subtitles.
+ */
+automatic: boolean, 
+/**
+ * One caption line per line, no timestamps.
+ */
+text: string, };

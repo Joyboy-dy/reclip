@@ -58,6 +58,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/api/v1/config", get(http::config::get_config))
         .route("/api/v1/probe", post(http::probe::probe))
+        .route("/api/v1/transcript", post(http::transcript::get_transcript))
         .route(
             "/api/v1/jobs",
             get(http::jobs::list).post(http::jobs::create),

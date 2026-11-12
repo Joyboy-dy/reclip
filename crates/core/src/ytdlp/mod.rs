@@ -8,6 +8,7 @@ pub mod parse;
 pub mod process;
 pub mod progress;
 pub mod runner;
+pub mod subs;
 
 #[cfg(test)]
 mod tests_args;

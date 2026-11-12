@@ -75,6 +75,10 @@ fn main() {
         }
         return;
     }
+    if flag("--write-subs") {
+        subtitles(&args, &url, template.expect("-o template"));
+        return;
+    }
     if flag("-j") {
         println!("WARNING: noise");
         println!(
@@ -160,4 +164,61 @@ fn partial(template: &str) {
         progress(&i.to_string(), "1000", "NA", "1000.0", "NA");
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+const MANUAL_VTT: &str = "WEBVTT
+Kind: captions
+
+1
+00:00:00.000 --> 00:00:02.000
+    <c.colorE5E5E5>Bonjour</c>
+";
+
+/// Rolling auto captions: every line is repeated by the next cue.
+const AUTO_VTT: &str = "WEBVTT
+Kind: captions
+Language: en
+
+    00:00:00.000 --> 00:00:02.000 align:start position:0%
+hello<00:00:00.500><c> world</c>
+
+    00:00:02.000 --> 00:00:02.010 align:start position:0%
+hello world
+
+    00:00:02.010 --> 00:00:04.000 align:start position:0%
+hello world
+second part
+
+    00:00:04.000 --> 00:00:04.010 align:start position:0%
+second part
+";
+
+/// `--write-subs`: writes `<template>.<lang>.vtt` files like yt-dlp and prints
+/// the `subtitles` field. `subs-manual` has uploaded subtitles in the
+/// requested language (English by default), `subs-auto` only automatic
+/// captions, `subs-both` an automatic English and a manual French track; any
+/// other URL has none.
+fn subtitles(args: &[String], url: &str, template: String) {
+    let langs = args
+        .windows(2)
+        .find(|w| w[0] == "--sub-langs")
+        .map_or("", |w| w[1].as_str());
+    // The default request is a regex list; a named language is used as is.
+    let named = (!langs.contains('*')).then_some(langs);
+    let write = |lang: &str, vtt: &str| {
+        std::fs::write(format!("{template}.{lang}.vtt"), vtt).unwrap();
+    };
+    let mut manual = serde_json::Map::new();
+    if url.contains("subs-manual") {
+        let lang = named.unwrap_or("en");
+        write(lang, MANUAL_VTT);
+        manual.insert(lang.into(), serde_json::json!([]));
+    } else if url.contains("subs-auto") {
+        write("en-orig", AUTO_VTT);
+    } else if url.contains("subs-both") {
+        write("en-orig", AUTO_VTT);
+        write("fr", MANUAL_VTT);
+        manual.insert("fr".into(), serde_json::json!([]));
+    }
+    println!("reclip-subs:{}", serde_json::Value::Object(manual));
 }

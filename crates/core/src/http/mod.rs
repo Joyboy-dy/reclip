@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod links;
 pub mod pages;
 pub mod probe;
+pub mod transcript;
 
 use axum::Json;
 use axum::extract::{FromRequest, Request};
