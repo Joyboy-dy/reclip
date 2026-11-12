@@ -57,7 +57,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_MAX_PER_SITE` | Downloads running at once for one site (minimum 1). | `2` |
 | `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `21600` |
 | `RECLIP_CLEANUP_INTERVAL` | Period of the expiry sweep, in seconds. | `600` |
-| `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
+| `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@`. Shows a link in the site footer. | disabled |
 | `RECLIP_PUBLIC_URL` | Public address behind a reverse proxy, e.g. `https://reclip.example.com`: scheme and host only, no path (otherwise it is ignored with a warning). Used for signed links and the `Origin` check. If unset, it is learned from the first proxied request (signed links only). | none |
 | `RECLIP_TRUSTED_PROXIES` | Comma-separated IPs or CIDR ranges whose `X-Forwarded-*` headers are trusted. | loopback and private ranges |
 | `RECLIP_ADMIN_TOKEN` | Token for the admin API (32 random characters or more). If unset, one is generated at first start and printed once in the logs. | generated |
@@ -91,6 +91,16 @@ YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*
 ReClip uses a per-request copy, so the original file is never modified. When the cookies expire, the error message says so: export new ones.
 
 YouTube also requires a JavaScript runtime: the Docker image ships Deno. When running outside Docker, install [Deno](https://deno.com) (recommended by yt-dlp). Bun 1.2.11 to 1.3.14 and Node also work as fallbacks.
+
+## Telegram bot
+
+ReClip ships an optional Telegram bot (`reclip-bot`). Send it a link, pick a format, and it sends the file back. It works in private chats only. It talks to the ReClip API with its own key and never touches the database.
+
+1. Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy the token.
+2. Put `TELEGRAM_BOT_TOKEN=<token>` and `COMPOSE_PROFILES=telegram` in `deploy/.env`, then run `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build`.
+3. Set `RECLIP_TELEGRAM_BOT_USERNAME` (without the `@`) to show a link in the site footer.
+
+With only a token, Telegram limits uploads to 50 MB. Larger files are sent as a signed download link. For files up to 2 GB, get an `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org) and run `sh deploy/setup.sh deploy/.env`. It writes the `.env`, calls `logOut` once on the official server and enables the `telegram-local` profile (a local Bot API server). Details in French in [deploy/README.md](deploy/README.md).
 
 ## Usage
 

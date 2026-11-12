@@ -1,6 +1,6 @@
 # Déploiement de ReClip
 
-Image Docker unique (`reclip-core`) : serveur Rust, interface web, yt-dlp, ffmpeg et Deno.
+Image Docker principale (`reclip-core`) : serveur Rust, interface web, yt-dlp, ffmpeg et Deno. Une seconde image optionnelle, `reclip-bot`, contient le bot Telegram (voir « Bot Telegram »).
 Contexte de build = racine du dépôt.
 
 ## Lancement local
@@ -193,6 +193,60 @@ docker compose -f deploy/compose.yaml exec core reclip-core url reset
 ```
 
 Redémarrez le conteneur après `url reset`. Si `RECLIP_PUBLIC_URL` est définie, elle continue de s'appliquer.
+
+## Bot Telegram
+
+Le bot est un second conteneur (`reclip-bot`, profil compose `telegram`). Il n'appelle que l'API du cœur et n'a jamais accès à la base. Il parle en privé uniquement : les groupes et les canaux sont ignorés.
+
+### Créer le bot
+
+1. Dans Telegram, ouvrez [@BotFather](https://t.me/BotFather) et envoyez `/newbot`.
+2. Nom affiché : `DL Manager`. Choisissez un nom d'utilisateur qui finit par `bot`.
+3. Copiez le jeton que BotFather renvoie. Ne le mettez jamais dans git.
+4. Pour le lien dans le pied de page du site, mettez le nom d'utilisateur (sans le `@`) dans `RECLIP_TELEGRAM_BOT_USERNAME`.
+
+### Mode simple (jeton seul)
+
+Le bot parle à `https://api.telegram.org`. Telegram limite alors les envois à 50 Mo. Au-delà, le bot envoie un lien de téléchargement signé.
+
+Dans `deploy/.env` (ou dans l'onglet Environment de Dokploy) :
+
+```
+TELEGRAM_BOT_TOKEN=<jeton>
+COMPOSE_PROFILES=telegram
+```
+
+Puis `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build`.
+
+### Mode 2 Go (serveur local)
+
+Le profil `telegram-local` démarre un serveur Bot API local. Le bot peut alors envoyer des fichiers jusqu'à 2 000 Mo.
+
+1. Sur [my.telegram.org](https://my.telegram.org), ouvrez « API development tools » et créez une application. Notez `api_id` et `api_hash`.
+2. Telegram exige un appel `logOut` unique sur le serveur officiel avant de passer au serveur local. Le script s'en charge :
+
+   ```
+   sh deploy/setup.sh deploy/.env
+   ```
+
+   Il lit `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` et `RECLIP_PUBLIC_URL` dans l'environnement, ou les demande. Il refuse d'écraser un fichier existant, n'affiche jamais le jeton et écrit le fichier en mode 600. Avec `--no-logout`, il saute l'appel `logOut`.
+3. À la main, sans le script : `curl -X POST https://api.telegram.org/bot<jeton>/logOut`, puis dans `deploy/.env` :
+
+   ```
+   TELEGRAM_BOT_TOKEN=<jeton>
+   TELEGRAM_API_ID=<api_id>
+   TELEGRAM_API_HASH=<api_hash>
+   TELEGRAM_API_URL=http://telegram-bot-api:8081
+   COMPOSE_PROFILES=telegram,telegram-local
+   ```
+
+Après `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local (`curl -X POST http://telegram-bot-api:8081/bot<jeton>/close` depuis le r�seau du conteneur) et attendre une dizaine de minutes. Le volume `tg-data` garde les fichiers envoy�s et grossit avec le temps.
+
+### Clé et état
+
+Le cœur crée la clé du bot (`telegram-bot`) au démarrage et l'écrit dans `/run/reclip/bot.key`, un volume partagé en lecture seule avec le bot. Mettre `RECLIP_BOT_KEY_FILE` à vide désactive la création. L'état des téléchargements suivis est dans le volume `bot-data` (`/var/lib/reclip-bot/state.json`) : le bot reprend le suivi après un redémarrage.
+
+Variables du bot : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_URL`, `RECLIP_CORE_URL`, `RECLIP_BOT_KEY_FILE`, `RECLIP_BOT_STATE`, `RECLIP_BOT_MAX_UPLOAD` (voir `deploy/.env.example`).
 
 ## Utilisation de l'API en ligne de commande
 
