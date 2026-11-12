@@ -121,8 +121,14 @@ fn main() {
         }
         let (ext, post) = if flag("-x") {
             ("mp3", "[ExtractAudio] Destination: ")
+        } else if url.contains("webm-only") {
+            // A single-file source whose remux was not possible.
+            ("webm", "[download] Destination: ")
         } else {
-            ("mp4", "[Merger] Merging formats into ")
+            // The container asked for with `--remux-video`, mp4 by default.
+            let remux = args.windows(2).find(|w| w[0] == "--remux-video");
+            let ext = remux.map_or("mp4", |w| w[1].as_str());
+            (ext, "[Merger] Merging formats into ")
         };
         let path = template.replace("%(ext)s", ext);
         println!("{post}\"{path}\"");

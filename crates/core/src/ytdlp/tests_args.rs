@@ -84,21 +84,26 @@ fn clip_sections() {
 }
 
 #[test]
-fn ffmpeg_postprocessing_is_left_to_finalize() {
-    // yt-dlp skips remux / extract postprocessors for files already in the
-    // target format, so nothing here may depend on them.
-    for f in [
-        MediaFormat::Mp4,
-        MediaFormat::Mov,
-        MediaFormat::Mkv,
-        MediaFormat::Mp3,
+fn video_is_remuxed_to_the_container_and_ffmpeg_args_are_left_to_finalize() {
+    // A single-file source (e.g. webm) is not merged, so only the remux
+    // brings it to the requested container. Faststart and metadata removal
+    // are not passed here: yt-dlp skips its postprocessors for files
+    // already in the target format, `finalize` runs them instead.
+    for (f, remux) in [
+        (MediaFormat::Mp4, Some("mp4")),
+        (MediaFormat::Mov, Some("mov")),
+        (MediaFormat::Mkv, Some("mkv")),
+        (MediaFormat::Mp3, None),
     ] {
         let o = DownloadOptions {
             strip_metadata: true,
             ..DownloadOptions::new(f)
         };
         let a = run(&o, "u");
-        assert!(!a.contains(&"--remux-video".into()), "{f:?}");
+        match remux {
+            Some(n) => assert!(has(&a, ["--remux-video", n]), "{f:?}"),
+            None => assert!(!a.contains(&"--remux-video".into()), "{f:?}"),
+        }
         let ppa: Vec<_> = a.iter().filter(|x| x.contains("ffmpeg_o:")).collect();
         assert_eq!(
             ppa,

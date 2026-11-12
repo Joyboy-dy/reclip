@@ -27,19 +27,21 @@ async fn run(
     format: MediaFormat,
     strip: bool,
 ) -> Result<std::path::PathBuf, ApiError> {
+    run_url(c, dir, format, strip, "https://ok").await
+}
+
+async fn run_url(
+    c: &Config,
+    dir: &Path,
+    format: MediaFormat,
+    strip: bool,
+    url: &str,
+) -> Result<std::path::PathBuf, ApiError> {
     let opts = DownloadOptions {
         strip_metadata: strip,
         ..DownloadOptions::new(format)
     };
-    download_with(
-        c,
-        dir,
-        &opts,
-        "https://ok",
-        |_| {},
-        CancellationToken::new(),
-    )
-    .await
+    download_with(c, dir, &opts, url, |_| {}, CancellationToken::new()).await
 }
 
 fn argv_record(dir: &Path) -> Option<String> {
@@ -103,4 +105,39 @@ async fn strip_failure_fails_the_job() {
     .unwrap_err();
     assert_eq!(e.code, ErrorCode::Internal);
     assert_eq!(e.message, "Could not remove metadata");
+}
+
+#[tokio::test]
+async fn fallback_extension_gets_no_faststart() {
+    // mov was asked for, but the source stayed webm: `-movflags` would make
+    // ffmpeg fail on it, so the pass decides from the real extension.
+    let dir = tempfile::tempdir().unwrap();
+    let p = run_url(
+        &fake_ffmpeg(),
+        dir.path(),
+        MediaFormat::Mov,
+        true,
+        "https://webm-only",
+    )
+    .await
+    .unwrap();
+    assert_eq!(p.file_name().unwrap(), "media.webm");
+    let argv = argv_record(dir.path()).expect("ffmpeg ran");
+    assert!(!argv.contains("-movflags"), "{argv}");
+    assert!(
+        argv.contains(
+            "-map_metadata
+-1"
+        ),
+        "{argv}"
+    );
+    assert!(
+        argv.contains(
+            "
+-dn
+"
+        ),
+        "{argv}"
+    );
+    assert!(!dir.path().join("media.finalize.webm").exists());
 }

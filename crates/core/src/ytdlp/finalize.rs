@@ -5,13 +5,18 @@
 //! `-map_metadata -1` would silently never run there. This pass always runs
 //! when either is wanted: a stream copy into a temp file, then an atomic
 //! rename over the original.
+//!
+//! The file may not be in the requested container (a source yt-dlp could
+//! not remux keeps its own extension), so faststart is decided from the
+//! real extension. Data streams are dropped: some containers cannot hold
+//! them and the stream copy would fail.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use reclip_shared::{ApiError, ErrorCode, MediaFormat};
+use reclip_shared::{ApiError, ErrorCode};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -28,21 +33,23 @@ fn err(code: ErrorCode, message: &str) -> ApiError {
     }
 }
 
+/// Whether `path` is an mp4/mov file, which `-movflags +faststart` applies to.
+fn is_mov_family(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("mov"))
+}
+
 /// ffmpeg arguments for the pass, or `None` when the file needs no rewrite
-/// (no metadata removal asked and the container is not mp4/mov).
-pub fn ffmpeg_args(
-    input: &Path,
-    output: &Path,
-    format: MediaFormat,
-    strip_metadata: bool,
-) -> Option<Vec<OsString>> {
-    let faststart = matches!(format, MediaFormat::Mp4 | MediaFormat::Mov);
+/// (no metadata removal asked and `input` is not an mp4/mov file).
+pub fn ffmpeg_args(input: &Path, output: &Path, strip_metadata: bool) -> Option<Vec<OsString>> {
+    let faststart = is_mov_family(input);
     if !strip_metadata && !faststart {
         return None;
     }
     let mut a: Vec<OsString> = ["-nostdin", "-y", "-i"].map(OsString::from).to_vec();
     a.push(input.into());
-    a.extend(["-map", "0", "-c", "copy"].map(OsString::from));
+    a.extend(["-map", "0", "-dn", "-c", "copy"].map(OsString::from));
     if strip_metadata {
         a.extend(["-map_metadata", "-1"].map(OsString::from));
     }
@@ -97,7 +104,7 @@ pub async fn finalize(
     cancel: &CancellationToken,
 ) -> Result<(), ApiError> {
     let tmp = temp_path(path);
-    let Some(args) = ffmpeg_args(path, &tmp, opts.format, opts.strip_metadata) else {
+    let Some(args) = ffmpeg_args(path, &tmp, opts.strip_metadata) else {
         return Ok(());
     };
     let outcome = run_ffmpeg(cfg, &args, cancel).await;
@@ -120,12 +127,15 @@ pub async fn finalize(
 mod tests {
     use super::*;
 
-    fn argv(format: MediaFormat, strip: bool) -> Option<Vec<String>> {
-        ffmpeg_args(Path::new("in.x"), Path::new("out.x"), format, strip)
+    fn argv(ext: &str, strip: bool) -> Option<Vec<String>> {
+        let input = format!("in.{ext}");
+        ffmpeg_args(Path::new(&input), Path::new("out.x"), strip)
             .map(|v| v.iter().map(|s| s.to_string_lossy().into_owned()).collect())
     }
-    fn expected(extra: &[&str]) -> Vec<String> {
-        let mut v: Vec<&str> = vec!["-nostdin", "-y", "-i", "in.x", "-map", "0", "-c", "copy"];
+    fn expected(ext: &str, extra: &[&str]) -> Vec<String> {
+        let input = format!("in.{ext}");
+        let mut v: Vec<&str> = vec!["-nostdin", "-y", "-i", &input];
+        v.extend(["-map", "0", "-dn", "-c", "copy"]);
         v.extend(extra);
         v.push("out.x");
         v.into_iter().map(String::from).collect()
@@ -134,34 +144,30 @@ mod tests {
     #[test]
     fn mp4_with_strip() {
         assert_eq!(
-            argv(MediaFormat::Mp4, true).unwrap(),
-            expected(&["-map_metadata", "-1", "-movflags", "+faststart"])
+            argv("mp4", true).unwrap(),
+            expected("mp4", &["-map_metadata", "-1", "-movflags", "+faststart"])
         );
     }
     #[test]
     fn mov_without_strip() {
         assert_eq!(
-            argv(MediaFormat::Mov, false).unwrap(),
-            expected(&["-movflags", "+faststart"])
+            argv("MOV", false).unwrap(),
+            expected("MOV", &["-movflags", "+faststart"])
         );
     }
     #[test]
-    fn mkv_with_strip() {
-        assert_eq!(
-            argv(MediaFormat::Mkv, true).unwrap(),
-            expected(&["-map_metadata", "-1"])
-        );
+    fn other_containers_with_strip_get_no_faststart() {
+        for ext in ["mkv", "webm", "m4a"] {
+            assert_eq!(
+                argv(ext, true).unwrap(),
+                expected(ext, &["-map_metadata", "-1"])
+            );
+        }
     }
     #[test]
-    fn m4a_with_strip() {
-        assert_eq!(
-            argv(MediaFormat::M4a, true).unwrap(),
-            expected(&["-map_metadata", "-1"])
-        );
-    }
-    #[test]
-    fn mkv_without_strip_needs_no_pass() {
-        assert!(argv(MediaFormat::Mkv, false).is_none());
-        assert!(argv(MediaFormat::Mp3, false).is_none());
+    fn other_containers_without_strip_need_no_pass() {
+        for ext in ["mkv", "webm", "mp3"] {
+            assert!(argv(ext, false).is_none(), "{ext}");
+        }
     }
 }

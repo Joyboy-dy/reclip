@@ -129,12 +129,16 @@ pub fn download_args(
     // Faststart and metadata removal are not done here: yt-dlp skips its
     // remux/extract postprocessors for files already in the target format.
     // `finalize` runs them as an explicit ffmpeg pass after the download.
+    // The remux still brings a single-file source (nothing to merge) to the
+    // requested container when yt-dlp can.
     match format_selector(opts.format, opts.format_id.as_deref()) {
         None => a.extend(["-x", "--audio-format", name].map(String::from)),
         Some(selector) => a.extend([
             "-f".into(),
             selector,
             "--merge-output-format".into(),
+            name.into(),
+            "--remux-video".into(),
             name.into(),
         ]),
     }

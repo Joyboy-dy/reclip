@@ -28,6 +28,8 @@ const KILL_GRACE: Duration = Duration::from_secs(5);
 const DOWNLOAD_TAIL: usize = 200;
 /// Thumbnail written next to the media; moved by the job worker.
 const THUMB_NAME: &str = "thumb.jpg";
+/// Temp output of the ffmpeg pass (see `finalize`).
+const FINALIZE_PREFIX: &str = "media.finalize.";
 
 fn err(code: ErrorCode, message: impl Into<String>) -> ApiError {
     ApiError {
@@ -157,10 +159,14 @@ pub async fn download_with(
 }
 
 /// The media is a file that is neither the `thumb.jpg` thumbnail (kept for
-/// the job) nor a leftover `*.part`.
+/// the job), a leftover `*.part` nor a `media.finalize.*` temp file left by
+/// an interrupted ffmpeg pass.
 fn is_media(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    path.is_file() && name != THUMB_NAME && !name.ends_with(".part")
+    path.is_file()
+        && name != THUMB_NAME
+        && !name.ends_with(".part")
+        && !name.starts_with(FINALIZE_PREFIX)
 }
 
 /// Keep the `media.<ext>` file (preferring the requested extension), else the
@@ -200,4 +206,27 @@ fn no_file_error(out: &Captured) -> ApiError {
         ErrorCode::Internal,
         "download finished but no file was found",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leftover_finalize_temp_never_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "media.finalize.mp4",
+            "media.mp4",
+            "thumb.jpg",
+            "media.webm.part",
+        ] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let picked = pick_output(dir.path(), MediaFormat::Mp4).unwrap();
+        assert_eq!(picked.file_name().unwrap(), "media.mp4");
+        let only_temp = tempfile::tempdir().unwrap();
+        std::fs::write(only_temp.path().join("media.finalize.mkv"), "x").unwrap();
+        assert!(pick_output(only_temp.path(), MediaFormat::Mkv).is_none());
+    }
 }
