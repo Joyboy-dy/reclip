@@ -7,7 +7,7 @@ use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
-use reclip_shared::{ErrorCode, JobState, LinkResponse, Scope};
+use reclip_shared::{ApiError, ErrorCode, Job, JobState, LinkResponse, Scope};
 use sha2::Sha256;
 
 use super::files::serve_job_file;
@@ -55,7 +55,7 @@ pub fn verify(key: &[u8; 32], token: &str, now: i64) -> Option<String> {
 
 /// Public origin for link URLs: configured address, the origin a trusted
 /// proxy forwarded, the learned address, then the request's own host.
-fn base_url(s: &AppState, fwd: &Forwarded) -> String {
+pub fn base_url(s: &AppState, fwd: &Forwarded) -> String {
     let own = || {
         let scheme = if fwd.https { "https" } else { "http" };
         let host = fwd.host.as_deref().unwrap_or("localhost");
@@ -85,6 +85,15 @@ pub async fn create(
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),
     };
+    match signed_link(&s, &base_url(&s, &fwd), &job) {
+        Ok(link) => Json(link).into_response(),
+        Err(e) => HttpError(e).into_response(),
+    }
+}
+
+/// A link to `job`'s file under `base` (see [`base_url`]), valid for the
+/// configured TTL but never past the file's own expiry. `job` must be done.
+pub fn signed_link(s: &AppState, base: &str, job: &Job) -> Result<LinkResponse, ApiError> {
     // Whole seconds: the token's `exp` and the reported expiry must agree.
     let ttl = i64::try_from(s.cfg.link_ttl.as_secs()).unwrap_or(i64::MAX);
     let mut exp = Utc::now()
@@ -97,17 +106,16 @@ pub async fn create(
             Err(e) => {
                 // Fail closed: a link must never outlive the file.
                 tracing::warn!(id = %job.id, error = %e, "unreadable file expiry, no link");
-                return HttpError(api_error(ErrorCode::Internal, "Internal error")).into_response();
+                return Err(api_error(ErrorCode::Internal, "Internal error"));
             }
         }
     }
     let expiry = DateTime::<Utc>::from_timestamp(exp, 0).unwrap_or(DateTime::<Utc>::MAX_UTC);
     let token = sign(&s.site.link_key, &job.id, exp);
-    Json(LinkResponse {
-        url: format!("{}/d/{token}", base_url(&s, &fwd)),
+    Ok(LinkResponse {
+        url: format!("{base}/d/{token}"),
         expires_at: expiry.to_rfc3339_opts(SecondsFormat::Millis, true),
     })
-    .into_response()
 }
 
 pub async fn redeem(

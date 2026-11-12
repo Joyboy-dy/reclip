@@ -19,7 +19,7 @@ use crate::app::AppState;
 use crate::config::{Config, Limits};
 use crate::http::{HttpError, api_error};
 
-const ON_BEHALF_OF: &str = "x-reclip-on-behalf-of";
+pub(crate) const ON_BEHALF_OF: &str = "x-reclip-on-behalf-of";
 const MAX_TG_DIGITS: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,15 +104,7 @@ pub(crate) fn unauthorized(message: &str) -> Response {
 pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -> Response {
     // Only the parts are borrowed across awaits: the body is not `Sync`.
     let (mut parts, body) = req.into_parts();
-    let peer = parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip());
-    let mut fwd = forwarded(peer, &parts.headers, &s.cfg.trusted_proxies);
-    if fwd.host.is_none() {
-        // HTTP/2 carries the host in the `:authority` pseudo-header.
-        fwd.host = parts.uri.authority().map(|a| a.to_string());
-    }
+    let fwd = request_origin(&s, &parts);
     let mut res = match resolve(&s, &parts, &fwd).await {
         Err(res) => res,
         Ok((caller, minted)) => {
@@ -128,8 +120,13 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
             res
         }
     };
-    // Responses are per caller: never let a shared cache keep them. A
-    // handler may still let the caller's own browser cache (`private, ...`).
+    no_store(&mut res);
+    res
+}
+
+/// Responses are per caller: never let a shared cache keep them. A handler
+/// may still let the caller's own browser cache (`private, ...`).
+pub(crate) fn no_store(res: &mut Response) {
     let private = res
         .headers()
         .get(CACHE_CONTROL)
@@ -139,7 +136,32 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
         res.headers_mut()
             .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
-    res
+}
+
+/// Where the request came from, once trusted proxies are accounted for.
+pub(crate) fn request_origin(s: &AppState, parts: &Parts) -> Forwarded {
+    let peer = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip());
+    let mut fwd = forwarded(peer, &parts.headers, &s.cfg.trusted_proxies);
+    if fwd.host.is_none() {
+        // HTTP/2 carries the host in the `:authority` pseudo-header.
+        fwd.host = parts.uri.authority().map(|a| a.to_string());
+    }
+    fwd
+}
+
+/// The key of a `Bearer` credential, or the 401 (500 on a store failure).
+pub(crate) async fn bearer_key(s: &AppState, auth: &HeaderValue) -> Result<ApiKeyInfo, Response> {
+    let invalid = || unauthorized("Invalid or expired API key");
+    let token = bearer(auth).ok_or_else(invalid)?;
+    match verify_key(&s.store, &s.key_usage, token).await {
+        Ok(info) => Ok(info),
+        Err(KeyError::Invalid) => Err(invalid()),
+        // Already logged by `verify_key`.
+        Err(KeyError::Internal) => Err(error(ErrorCode::Internal, "Internal error")),
+    }
 }
 
 /// The caller, plus the cookie value to set when one was just minted.
@@ -152,14 +174,7 @@ async fn resolve(
     // Other schemes (Basic credentials a proxy forwards or a browser resends)
     // are not key attempts: they stay visitors.
     if let Some(auth) = headers.get(AUTHORIZATION).filter(|v| is_bearer_scheme(v)) {
-        let invalid = || unauthorized("Invalid or expired API key");
-        let token = bearer(auth).ok_or_else(invalid)?;
-        let info = match verify_key(&s.store, &s.key_usage, token).await {
-            Ok(info) => info,
-            Err(KeyError::Invalid) => return Err(invalid()),
-            // Already logged by `verify_key`.
-            Err(KeyError::Internal) => return Err(error(ErrorCode::Internal, "Internal error")),
-        };
+        let info = bearer_key(s, auth).await?;
         let caller = match headers.get(ON_BEHALF_OF) {
             None => key_caller(&s.cfg, info),
             Some(who) => delegated_caller(&s.cfg, info, who).map_err(|e| e.into_response())?,
@@ -197,7 +212,7 @@ fn key_limits(cfg: &Config, info: &ApiKeyInfo) -> Option<Limits> {
     })
 }
 
-fn key_caller(cfg: &Config, info: ApiKeyInfo) -> Caller {
+pub(crate) fn key_caller(cfg: &Config, info: ApiKeyInfo) -> Caller {
     let id = format!("key:{}", info.id);
     Caller {
         owner: id.clone(),
