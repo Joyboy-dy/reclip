@@ -56,7 +56,15 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `86400` |
 | `RECLIP_CLEANUP_INTERVAL` | Period of the expiry sweep, in seconds. | `600` |
 | `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
+| `RECLIP_PUBLIC_URL` | Public address behind a reverse proxy, e.g. `https://reclip.example.com`. Used for signed links. If unset, it is learned from the first proxied request. | none |
+| `RECLIP_TRUSTED_PROXIES` | Comma-separated IPs or CIDR ranges whose `X-Forwarded-*` headers are trusted. | loopback and private ranges |
+| `RECLIP_ADMIN_TOKEN` | Token for the admin API (32 random characters or more). If unset, one is generated at first start and printed once in the logs. | generated |
+| `RECLIP_PUBLIC_WEB` | `false` turns on private mode: the whole API needs a key, except `GET /api/v1/config`. | `true` |
+| `RECLIP_LINK_TTL` | Lifetime of a signed download link, in seconds. | `21600` |
+| `RECLIP_LIMIT_<TIER>_<LIMIT>` | Rate limits. `TIER` is `WEB`, `KEY` or `TG`; `LIMIT` is `PROBES_PER_MIN`, `JOBS_PER_HOUR` or `ACTIVE`. `0` means unlimited. | see below |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
+
+Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 100 / 80, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10.
 
 The downloads directory belongs to ReClip: at startup it deletes the job folders (32 hex characters) it no longer knows, so give it a dedicated folder.
 
@@ -89,6 +97,60 @@ Jobs are attached to an anonymous `reclip_client` cookie set by the server. A sc
 ```bash
 curl -c cookies.txt -b cookies.txt http://localhost:8899/api/v1/jobs
 ```
+
+## API for agents
+
+Scripts and bots use API keys instead of the browser cookie. Create one inside the container (the key is shown once):
+
+```bash
+docker compose exec core reclip-core keys create --name agent
+```
+
+Options: `--scopes probe,jobs:create,jobs:read,jobs:cancel` (the default set; `delegate` lets a bot act for Telegram users and must be added explicitly), `--unlimited`, `--expires-days N`. Also `keys list` and `keys revoke <id>`. Keys look like `rck_<id>_<secret>` and go in the `Authorization` header. The examples use a placeholder host and key:
+
+```bash
+export RECLIP=https://reclip.example.com
+export KEY=rck_xxxxxxxx_...
+
+# Probe a URL
+curl -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "https://www.youtube.com/watch?v=..."}' $RECLIP/api/v1/probe
+
+# Create a job (format: "mp4" or "mp3"); answers 202 with the job id
+curl -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "https://www.youtube.com/watch?v=...", "format": "mp4"}' $RECLIP/api/v1/jobs
+
+# Follow it: poll, or stream server-sent events
+curl -H "Authorization: Bearer $KEY" $RECLIP/api/v1/jobs/<id>
+curl -N -H "Authorization: Bearer $KEY" $RECLIP/api/v1/jobs/<id>/events
+
+# Download the file
+curl -H "Authorization: Bearer $KEY" -OJ $RECLIP/api/v1/jobs/<id>/file
+
+# Get a signed link that works without a key: {"url": ..., "expires_at": ...}
+curl -X POST -H "Authorization: Bearer $KEY" $RECLIP/api/v1/jobs/<id>/link
+
+# Cancel, or delete
+curl -X POST -H "Authorization: Bearer $KEY" $RECLIP/api/v1/jobs/<id>/cancel
+curl -X DELETE -H "Authorization: Bearer $KEY" $RECLIP/api/v1/jobs/<id>
+```
+
+A signed link (`GET /d/{token}`) needs no key and expires after `RECLIP_LINK_TTL` seconds, or when the file is deleted.
+
+A key with the `delegate` scope can act for a Telegram user with the `X-Reclip-On-Behalf-Of: tg:<id>` header. Every delegate key can see all `tg:*` jobs, so only give it to your own bot.
+
+Errors:
+
+| Status | Code | Meaning |
+|---|---|---|
+| 401 | `unauthorized` | Missing, invalid, expired or revoked key. |
+| 403 | `forbidden` | The key lacks the scope. |
+| 403 | `forbidden_target` | The URL points to a private or internal address. |
+| 429 | `rate_limited` | Over a limit. `Retry-After` gives the wait in seconds. |
+
+Responses also carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets).
+
+With `RECLIP_PUBLIC_WEB=false`, the whole API needs a key except `GET /api/v1/config`. Behind a reverse proxy, set `RECLIP_PUBLIC_URL` and make sure the proxy sends `X-Forwarded-Proto`, otherwise POST and DELETE requests from browsers are refused. See [deploy/README.md](deploy/README.md) (in French) for the admin token, limits and proxy setup.
 
 ## Development
 
