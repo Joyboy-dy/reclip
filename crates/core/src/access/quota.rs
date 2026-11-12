@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::response::{IntoResponse, Response};
 use tokio::sync::OwnedMutexGuard;
 
 use super::caller::Caller;
 use super::limits::{Bucket, Limited, RateInfo};
 use crate::app::AppState;
 use crate::http::internal;
+use crate::service::ServiceError;
 
 /// Serializes job admission per quota key, so the active-jobs count and the
 /// insertion that follows it cannot interleave between concurrent requests.
@@ -60,7 +60,7 @@ pub async fn check_probe(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, L
 /// limit. A refusal by the cap does not consume an hourly slot. Call it while
 /// holding the caller's [`AdmissionLocks`] guard and keep the guard until the
 /// job is inserted, or concurrent creations can exceed the cap.
-pub async fn check_create(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, Response> {
+pub async fn check_create(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, ServiceError> {
     let Some(limits) = c.limits else {
         return Ok(None);
     };
@@ -70,7 +70,7 @@ pub async fn check_create(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, 
             .store()
             .count_active(&c.quota_key)
             .await
-            .map_err(|e| internal(e).into_response())?;
+            .map_err(internal)?;
         if active >= limits.max_active {
             let info = RateInfo {
                 limit: limits.max_active,
@@ -82,10 +82,10 @@ pub async fn check_create(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, 
                 retry_after: ACTIVE_RETRY_AFTER,
                 message: format!("Too many downloads in progress (max {})", limits.max_active),
             }
-            .into_response());
+            .into());
         }
     }
     s.limiter
         .check(Bucket::Create, &c.quota_key, limits.jobs_per_hour)
-        .map_err(IntoResponse::into_response)
+        .map_err(Into::into)
 }

@@ -17,6 +17,7 @@ use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
 use crate::http;
 use crate::jobs::JobManager;
+use crate::mcp;
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -78,7 +79,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/history/{id}/thumb", get(http::history::thumb))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
-    // Admin routes carry their own token check, outside `caller_layer`.
+    // Admin routes and `/mcp` carry their own checks, outside `caller_layer`.
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/d/{token}", get(http::links::redeem))
@@ -90,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/{*rest}", get(http::pages::admin))
         .merge(http::admin::routes(state.clone()))
         .merge(http::admin_session::routes())
+        .merge(mcp::routes(state.clone()))
         .merge(api)
         .fallback_service(web)
         .with_state(state);
