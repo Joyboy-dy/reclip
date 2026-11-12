@@ -48,9 +48,9 @@ pub fn welcome(l: Lang) -> String {
 pub fn help(l: Lang) -> String {
     l.pick(
         "Envoie un lien (YouTube, TikTok, Instagram, X...), choisis vidéo ou audio, puis la qualité. \
-         Commandes : /start, /help, /jobs (téléchargements en cours), /cancel.",
+         Commandes : /mp4 <lien>, /mp3 <lien>, /jobs (téléchargements en cours), /cancel, /help.",
         "Send a link (YouTube, TikTok, Instagram, X...), pick video or audio, then the quality. \
-         Commands: /start, /help, /jobs (running downloads), /cancel.",
+         Commands: /mp4 <link>, /mp3 <link>, /jobs (running downloads), /cancel, /help.",
     )
 }
 
@@ -79,12 +79,12 @@ pub fn choose_quality(l: Lang, title: &str) -> String {
     }
 }
 
-pub fn btn_video(l: Lang) -> String {
-    l.pick("Vidéo", "Video")
+pub fn btn_video(_l: Lang) -> String {
+    "🎬 MP4".into()
 }
 
-pub fn btn_audio(l: Lang) -> String {
-    l.pick("Audio (MP3)", "Audio (MP3)")
+pub fn btn_audio(_l: Lang) -> String {
+    "🎵 MP3".into()
 }
 
 pub fn btn_best(l: Lang) -> String {
@@ -161,7 +161,8 @@ pub fn playlist_refused(l: Lang, site: Option<&str>) -> String {
     match (site, l) {
         (Some(s), Lang::Fr) => format!("{base}, ou utilise le site : {s}"),
         (Some(s), Lang::En) => format!("{base}, or use the website: {s}"),
-        (None, _) => format!("{base}."),
+        (None, Lang::Fr) => format!("{base}, ou utilise le site ReClip."),
+        (None, Lang::En) => format!("{base}, or use the ReClip website."),
     }
 }
 
@@ -172,14 +173,17 @@ pub fn link_expired(l: Lang) -> String {
     )
 }
 
-pub fn file_too_big(l: Lang, size: u64, link: &str) -> String {
-    let s = human_size(size);
+/// `size` is shown when known.
+pub fn file_too_big(l: Lang, size: Option<u64>, link: &str) -> String {
+    let s = size
+        .map(|n| format!(" ({})", human_size(n)))
+        .unwrap_or_default();
     match l {
         Lang::Fr => format!(
-            "Le fichier ({s}) est trop gros pour Telegram. Télécharge-le ici (lien temporaire) :\n{link}"
+            "Le fichier{s} est trop gros pour Telegram. Télécharge-le ici (lien temporaire) :\n{link}"
         ),
         Lang::En => format!(
-            "The file ({s}) is too big for Telegram. Download it here (temporary link):\n{link}"
+            "The file{s} is too big for Telegram. Download it here (temporary link):\n{link}"
         ),
     }
 }
@@ -256,6 +260,9 @@ pub fn human_size(bytes: u64) -> String {
         format!("{v:.1} {}", UNITS[i])
     }
 }
+
+mod more;
+pub use more::*;
 
 #[cfg(test)]
 mod tests;

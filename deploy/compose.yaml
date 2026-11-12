@@ -94,6 +94,7 @@ services:
       RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE-/run/reclip/bot.key}
       RECLIP_BOT_STATE: ${RECLIP_BOT_STATE:-/var/lib/reclip-bot/state.json}
       RECLIP_BOT_MAX_UPLOAD: ${RECLIP_BOT_MAX_UPLOAD:-}
+      RECLIP_PUBLIC_URL: ${RECLIP_PUBLIC_URL:-}
       RUST_LOG: ${RUST_LOG:-info}
       TZ: ${TZ:-UTC}
 
