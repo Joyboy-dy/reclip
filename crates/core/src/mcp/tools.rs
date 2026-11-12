@@ -129,7 +129,15 @@ impl Call<'_> {
     }
 
     async fn start(&self, raw: Map<String, Value>) -> Outcome {
-        let req = args::<StartArgs>(raw)?.into();
+        let a: StartArgs = args(raw)?;
+        // The REST API ignores it; an agent that sets both is confused.
+        if a.quality.is_some() && a.format.is_some_and(|f| f.is_audio()) {
+            return Err(api_error(
+                ErrorCode::InvalidRequest,
+                "quality applies to video formats only; omit it for audio",
+            ));
+        }
+        let req = a.into();
         let (job, _) = service::create_job(self.s, self.caller, req)
             .await
             .map_err(|e| e.api_error())?;

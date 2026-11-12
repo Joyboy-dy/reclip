@@ -2,7 +2,9 @@ use std::path::Path;
 
 use reclip_shared::{Clip, MediaFormat};
 
-use super::args::{DownloadOptions, download_args, meta_args, probe_args, subs_args};
+use super::args::{
+    DownloadOptions, download_args, is_playlist_only, meta_args, probe_args, subs_args,
+};
 use crate::config::Config;
 
 fn cfg() -> Config {
@@ -201,6 +203,8 @@ fn subtitle_calls_download_no_media_and_keep_site_fixes() {
     assert!(a.contains(&"--skip-download".to_string()));
     assert!(has(&a, ["--sub-langs", r"fr\-FR"]));
     assert!(has(&a, ["--sub-format", "vtt"]));
+    assert!(has(&a, ["--convert-subs", "vtt"]));
+    assert!(has(&a, ["-I", "1"]));
     assert!(has(
         &a,
         ["--add-headers", "Referer:https://www.bilibili.com/"]
@@ -208,9 +212,29 @@ fn subtitle_calls_download_no_media_and_keep_site_fixes() {
     assert_eq!(a[a.len() - 2..], ["--", url]);
     let m = meta_args(&cfg(), url);
     assert!(m.contains(&"--skip-download".to_string()));
+    assert!(has(&m, ["-I", "1"]));
     assert!(m.iter().any(|x| x.starts_with("reclip-meta:")));
     assert!(has(
         &m,
         ["--add-headers", "Origin:https://www.bilibili.com"]
     ));
+}
+
+#[test]
+fn playlist_only_links_are_recognised() {
+    for yes in [
+        "https://www.youtube.com/playlist?list=PL1",
+        "https://www.youtube.com/channel/UC1/videos?list=PL1",
+    ] {
+        assert!(is_playlist_only(yes), "{yes}");
+    }
+    for no in [
+        "https://www.youtube.com/watch?v=a&list=PL1",
+        "https://www.youtube.com/watch?list=PL1&v=a",
+        "https://youtu.be/a?list=PL1",
+        "https://www.youtube.com/watch?v=a",
+        "https://example.com/video",
+    ] {
+        assert!(!is_playlist_only(no), "{no}");
+    }
 }

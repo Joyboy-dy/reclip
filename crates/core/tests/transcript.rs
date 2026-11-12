@@ -249,3 +249,32 @@ async fn a_failing_second_pass_is_reported_and_cleaned_up() {
     assert_eq!(r.status(), 500);
     assert_eq!(std::fs::read_dir(s.data.join("tmp")).unwrap().count(), 0);
 }
+
+#[tokio::test]
+async fn subtitles_written_as_srt_are_read() {
+    let s = TestServer::start(|_| {}).await;
+    let b = fetch(&s, "https://subs-srt.example/v", None).await;
+    assert_eq!(
+        (b["language"].as_str(), b["text"].as_str()),
+        (Some("zh"), Some("ni hao"))
+    );
+    assert_eq!(std::fs::read_dir(s.data.join("tmp")).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn playlist_links_are_refused() {
+    let s = TestServer::start(|_| {}).await;
+    for url in [
+        "https://subs-manual.example/playlist?list=PL1",
+        "https://subs-manual.example/channel/x/videos?list=PL1",
+    ] {
+        let r = s.post(TRANSCRIPT, body(url)).await;
+        assert_eq!(r.status(), 400, "{url}");
+        let b: Value = r.json().await.unwrap();
+        assert_eq!(b["code"], "invalid_request");
+        assert_eq!(b["message"], "Pass a single video link, not a playlist");
+    }
+    // A video that also names a playlist is a single video.
+    let b = fetch(&s, "https://subs-manual.example/watch?v=a&list=PL1", None).await;
+    assert_eq!(b["language"], "en");
+}

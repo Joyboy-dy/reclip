@@ -211,6 +211,7 @@ fn tracks(
         () if url.contains("subs-both") => ("fr", &["fr"], &["en-orig"]),
         () if url.contains("subs-enus") => ("en", &["en-US"], &[]),
         () if url.contains("subs-frfr") => ("fr", &["fr-FR"], &[]),
+        () if url.contains("subs-srt") => ("zh", &["zh"], &[]),
         () if url.contains("subs-fr") => ("fr", &["fr"], &[]),
         () if url.contains("subs-fail") => ("en", &["en"], &[]),
         () if url.contains("subs-lost") => ("en", &["en"], &[]),
@@ -256,5 +257,12 @@ fn subtitles(args: &[String], url: &str, template: String) {
     } else {
         AUTO_VTT
     };
+    if url.contains("subs-srt") {
+        // A site without WebVTT whose conversion did not run: yt-dlp keeps
+        // the original format.
+        let srt = "1\n00:00:00,000 --> 00:00:01,000\nni hao\n\n";
+        std::fs::write(format!("{template}.{key}.srt"), srt).unwrap();
+        return;
+    }
     std::fs::write(format!("{template}.{key}.vtt"), vtt).unwrap();
 }

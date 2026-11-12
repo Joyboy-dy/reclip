@@ -65,6 +65,13 @@ pub fn session_args_with(
     })
 }
 
+/// A link that names a playlist and no single video: `probe_args` walks it
+/// with `--flat-playlist`, and a transcript refuses it.
+pub fn is_playlist_only(url: &str) -> bool {
+    let has_video = url.contains("?v=") || url.contains("&v=") || url.contains("youtu.be/");
+    !is_x_post(url) && url.contains("list=") && !has_video
+}
+
 pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
     if is_x_post(url) {
         // No --no-playlist: a multi-video post then prints one JSON per video.
@@ -85,7 +92,7 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
 /// Pass 1 of a transcript: print the video's language and its subtitle and
 /// automatic caption tracks as one JSON line. Nothing is downloaded.
 pub fn meta_args(cfg: &Config, url: &str) -> Vec<String> {
-    let mut a: Vec<String> = ["--skip-download", "--no-playlist", "--print"]
+    let mut a: Vec<String> = ["--skip-download", "--no-playlist", "-I", "1", "--print"]
         .map(String::from)
         .to_vec();
     a.push(format!(
@@ -96,15 +103,20 @@ pub fn meta_args(cfg: &Config, url: &str) -> Vec<String> {
     a
 }
 
-/// Pass 2: write `<dir>/sub.<key>.vtt`, exactly that one track, without
+/// Pass 2: write `<dir>/sub.<key>.vtt` (converted when the site has another
+/// format; `.srt` is also read), exactly that one track, without
 /// downloading the media.
 pub fn subs_args(cfg: &Config, url: &str, key: &str, dir: &Path) -> Vec<String> {
     let mut a: Vec<String> = [
         "--skip-download",
         "--no-playlist",
+        "-I",
+        "1",
         "--write-subs",
         "--write-auto-subs",
         "--sub-format",
+        "vtt",
+        "--convert-subs",
         "vtt",
         "--sub-langs",
     ]
