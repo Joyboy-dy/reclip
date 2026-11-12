@@ -1,5 +1,7 @@
 //! Runtime configuration read from environment variables.
 
+use ipnet::IpNet;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -27,6 +29,52 @@ pub struct Config {
     pub file_ttl: Duration,
     /// Period of the expiry sweep.
     pub cleanup_interval: Duration,
+    /// Peers allowed to set `X-Forwarded-*` headers.
+    pub trusted_proxies: Vec<IpNet>,
+    /// Public base URL, without trailing slash.
+    pub public_url: Option<String>,
+    pub admin_token: Option<String>,
+    /// Whether the web UI is open without an API key.
+    pub public_web: bool,
+    /// How long a signed download link stays valid.
+    pub link_ttl: Duration,
+    pub limits: TierLimits,
+}
+
+/// Rate limits for one access tier. 0 means unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub probes_per_minute: u32,
+    pub jobs_per_hour: u32,
+    pub max_active: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TierLimits {
+    pub web: Limits,
+    pub key: Limits,
+    pub tg: Limits,
+}
+
+const DEFAULT_PROXIES: &str =
+    "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7";
+
+/// Parse a comma-separated list of CIDRs or bare addresses; bad entries are skipped.
+fn parse_proxies(list: &str) -> Vec<IpNet> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .filter_map(|e| {
+            let net = e
+                .parse::<IpNet>()
+                .ok()
+                .or_else(|| e.parse::<IpAddr>().ok().map(IpNet::from));
+            if net.is_none() {
+                tracing::warn!(entry = e, "ignoring invalid RECLIP_TRUSTED_PROXIES entry");
+            }
+            net
+        })
+        .collect()
 }
 
 impl Config {
@@ -44,6 +92,22 @@ impl Config {
                 .unwrap_or(default)
                 .max(1)
         };
+
+        let limit = |tier: &str, d: (u32, u32, u32)| {
+            let n = |what: &str, default: u32| {
+                get(&format!("RECLIP_LIMIT_{tier}_{what}"))
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(default)
+            };
+            Limits {
+                probes_per_minute: n("PROBES_PER_MIN", d.0),
+                jobs_per_hour: n("JOBS_PER_HOUR", d.1),
+                max_active: n("ACTIVE", d.2),
+            }
+        };
+        let public_web = get("RECLIP_PUBLIC_WEB")
+            .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no"))
+            .unwrap_or(true);
 
         let data_dir = get("RECLIP_DATA_DIR")
             .map(PathBuf::from)
@@ -78,6 +142,18 @@ impl Config {
             max_per_site: slots("RECLIP_MAX_PER_SITE", 2),
             file_ttl: Duration::from_secs(num("RECLIP_FILE_TTL").unwrap_or(86400)),
             cleanup_interval: Duration::from_secs(num("RECLIP_CLEANUP_INTERVAL").unwrap_or(600)),
+            trusted_proxies: parse_proxies(
+                &get("RECLIP_TRUSTED_PROXIES").unwrap_or_else(|| DEFAULT_PROXIES.into()),
+            ),
+            public_url: get("RECLIP_PUBLIC_URL").map(|u| u.trim_end_matches('/').to_string()),
+            admin_token: get("RECLIP_ADMIN_TOKEN"),
+            public_web,
+            link_ttl: Duration::from_secs(num("RECLIP_LINK_TTL").unwrap_or(21600)),
+            limits: TierLimits {
+                web: limit("WEB", (120, 100, 80)),
+                key: limit("KEY", (120, 200, 100)),
+                tg: limit("TG", (30, 40, 10)),
+            },
         }
     }
 }
@@ -129,5 +205,59 @@ mod tests {
     fn downloads_dir_follows_data_dir() {
         let c = Config::from_env(&|k| (k == "RECLIP_DATA_DIR").then(|| "/srv/r".into()));
         assert_eq!(c.downloads_dir, PathBuf::from("/srv/r").join("downloads"));
+    }
+
+    #[test]
+    fn access_defaults() {
+        let c = Config::from_env(&|_| None);
+        assert_eq!(c.trusted_proxies.len(), 6);
+        assert!(c.public_web && c.public_url.is_none() && c.admin_token.is_none());
+        assert_eq!(c.link_ttl, Duration::from_secs(21600));
+        let l = |a, b, c| Limits {
+            probes_per_minute: a,
+            jobs_per_hour: b,
+            max_active: c,
+        };
+        assert_eq!(c.limits.web, l(120, 100, 80));
+        assert_eq!(c.limits.key, l(120, 200, 100));
+        assert_eq!(c.limits.tg, l(30, 40, 10));
+    }
+
+    #[test]
+    fn limits_override_and_zero() {
+        let env = |k: &str| match k {
+            "RECLIP_LIMIT_TG_ACTIVE" => Some("0".into()),
+            "RECLIP_LIMIT_WEB_PROBES_PER_MIN" => Some("7".into()),
+            "RECLIP_LIMIT_KEY_JOBS_PER_HOUR" => Some("abc".into()),
+            "RECLIP_PUBLIC_URL" => Some("https://r.example/".into()),
+            _ => None,
+        };
+        let c = Config::from_env(&env);
+        assert_eq!(c.limits.tg.max_active, 0);
+        assert_eq!(c.limits.web.probes_per_minute, 7);
+        assert_eq!(c.limits.key.jobs_per_hour, 200);
+        assert_eq!(c.public_url.as_deref(), Some("https://r.example"));
+    }
+
+    #[test]
+    fn bad_proxy_entry_skipped() {
+        let c = Config::from_env(&|k| {
+            (k == "RECLIP_TRUSTED_PROXIES").then(|| "10.0.0.0/8, nope, 203.0.113.5, ::1".into())
+        });
+        let want: Vec<IpNet> = ["10.0.0.0/8", "203.0.113.5/32", "::1/128"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert_eq!(c.trusted_proxies, want);
+    }
+
+    #[test]
+    fn public_web_false_values() {
+        for v in ["false", "0", "no", "FALSE"] {
+            let c = Config::from_env(&|k| (k == "RECLIP_PUBLIC_WEB").then(|| v.into()));
+            assert!(!c.public_web, "{v}");
+        }
+        let c = Config::from_env(&|k| (k == "RECLIP_PUBLIC_WEB").then(|| "true".into()));
+        assert!(c.public_web);
     }
 }

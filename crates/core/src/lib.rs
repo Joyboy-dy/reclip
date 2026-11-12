@@ -1,5 +1,6 @@
 //! ReClip core: configuration and yt-dlp integration.
 
+pub mod access;
 pub mod app;
 pub mod config;
 pub mod healthcheck;
