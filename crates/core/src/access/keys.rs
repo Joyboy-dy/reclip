@@ -8,6 +8,9 @@ use reclip_shared::ApiError;
 use reclip_shared::ErrorCode;
 use reclip_shared::admin::{ApiKeyInfo, CreateKeyRequest, CreatedKey, Scope};
 use sha2::{Digest, Sha256};
+use std::time::Instant;
+
+use super::key_usage::KeyUsage;
 
 use crate::http::{api_error, internal};
 use crate::store::{Store, now, now_plus};
@@ -151,8 +154,13 @@ async fn free_id(store: &Store) -> Result<String, ApiError> {
     Err(internal("could not find a free api key id").0)
 }
 
-/// Check a raw `rck_...` token (without the `Bearer ` prefix).
-pub async fn verify_key(store: &Store, bearer: &str) -> Result<ApiKeyInfo, KeyError> {
+/// Check a raw `rck_...` token (without the `Bearer ` prefix) and record
+/// the use through `usage`, which coalesces the writes.
+pub async fn verify_key(
+    store: &Store,
+    usage: &KeyUsage,
+    bearer: &str,
+) -> Result<ApiKeyInfo, KeyError> {
     let (id, secret) = parse_key(bearer).ok_or(KeyError::Invalid)?;
     let presented = sha256_hex(secret);
     let found = store.key_with_hash(id).await.map_err(|e| {
@@ -163,20 +171,21 @@ pub async fn verify_key(store: &Store, bearer: &str) -> Result<ApiKeyInfo, KeyEr
     if !ct_eq(presented.as_bytes(), stored.as_bytes()) {
         return Err(KeyError::Invalid);
     }
-    if info.revoked_at.is_some()
-        || info
-            .expires_at
-            .as_deref()
-            .is_some_and(|e| e <= now().as_str())
-    {
+    let stamp = now();
+    if info.revoked_at.is_some() || info.expires_at.as_deref().is_some_and(|e| e <= &*stamp) {
         return Err(KeyError::Invalid);
     }
-    let (store, id) = (store.clone(), info.id.clone());
-    tokio::spawn(async move {
-        if let Err(e) = store.touch_key(&id).await {
-            tracing::warn!(error = %e, "failed to record api key use");
-        }
-    });
+    let due = usage.record(&info.id, Instant::now(), &stamp);
+    if !due.is_empty() {
+        let store = store.clone();
+        tokio::spawn(async move {
+            for t in due {
+                if let Err(e) = store.touch_key_by(&t.id, t.count, &t.used_at).await {
+                    tracing::warn!(error = %e, "failed to record api key use");
+                }
+            }
+        });
+    }
     Ok(info)
 }
 

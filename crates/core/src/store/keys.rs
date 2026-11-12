@@ -120,13 +120,15 @@ impl Store {
         Ok(res.rows_affected() == 1)
     }
 
-    /// Record a use: `last_used_at = now`, `request_count + 1`.
-    pub async fn touch_key(&self, id: &str) -> Result<()> {
+    /// Record `count` uses, the last one at `used_at`. `last_used_at` never
+    /// moves back when touches land out of order.
+    pub async fn touch_key_by(&self, id: &str, count: u64, used_at: &str) -> Result<()> {
         sqlx::query(
-            "UPDATE api_keys SET last_used_at = ?, request_count = request_count + 1 \
-             WHERE id = ?",
+            "UPDATE api_keys SET request_count = request_count + ?, \
+             last_used_at = MAX(COALESCE(last_used_at, ''), ?) WHERE id = ?",
         )
-        .bind(now())
+        .bind(i64::try_from(count).unwrap_or(i64::MAX))
+        .bind(used_at)
         .bind(id)
         .execute(&self.0)
         .await?;

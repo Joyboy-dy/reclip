@@ -3,6 +3,7 @@
 pub mod caller;
 pub mod cookie;
 pub mod ip;
+pub mod key_usage;
 pub mod keys;
 pub mod limits;
 pub mod origin;

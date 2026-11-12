@@ -55,11 +55,13 @@ fn parse_rejects_malformed() {
 async fn verify_ok_then_revoked() {
     let (store, _d) = store().await;
     let created = create_key(&store, req("a")).await.unwrap();
-    let info = verify_key(&store, &created.key).await.unwrap();
+    let info = verify_key(&store, &KeyUsage::default(), &created.key)
+        .await
+        .unwrap();
     assert_eq!(info.id, created.info.id);
     assert!(store.revoke_key(&info.id).await.unwrap());
     assert!(matches!(
-        verify_key(&store, &created.key).await,
+        verify_key(&store, &KeyUsage::default(), &created.key).await,
         Err(KeyError::Invalid)
     ));
 }
@@ -71,7 +73,11 @@ async fn verify_expired() {
     r.expires_in_days = Some(1);
     let created = create_key(&store, r).await.unwrap();
     assert!(created.info.expires_at.is_some());
-    assert!(verify_key(&store, &created.key).await.is_ok());
+    assert!(
+        verify_key(&store, &KeyUsage::default(), &created.key)
+            .await
+            .is_ok()
+    );
 
     let secret = created.key.rsplit('_').next().unwrap();
     let mut past = created.info.clone();
@@ -80,7 +86,7 @@ async fn verify_expired() {
     store.insert_key(&past, &sha256_hex(secret)).await.unwrap();
     let key = format!("rck_pastpast_{secret}");
     assert!(matches!(
-        verify_key(&store, &key).await,
+        verify_key(&store, &KeyUsage::default(), &key).await,
         Err(KeyError::Invalid)
     ));
 }
@@ -91,12 +97,12 @@ async fn verify_wrong_secret() {
     let created = create_key(&store, req("a")).await.unwrap();
     let wrong = format!("rck_{}_{}", created.info.id, "z".repeat(43));
     assert!(matches!(
-        verify_key(&store, &wrong).await,
+        verify_key(&store, &KeyUsage::default(), &wrong).await,
         Err(KeyError::Invalid)
     ));
     let unknown = format!("rck_nosuchid_{}", "z".repeat(43));
     assert!(matches!(
-        verify_key(&store, &unknown).await,
+        verify_key(&store, &KeyUsage::default(), &unknown).await,
         Err(KeyError::Invalid)
     ));
 }
@@ -163,5 +169,9 @@ async fn create_bounds_expiry() {
         exp.as_str() > now().as_str() && !exp.starts_with('+'),
         "{exp}"
     );
-    assert!(verify_key(&store, &created.key).await.is_ok());
+    assert!(
+        verify_key(&store, &KeyUsage::default(), &created.key)
+            .await
+            .is_ok()
+    );
 }

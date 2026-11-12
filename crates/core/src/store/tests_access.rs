@@ -104,11 +104,13 @@ async fn touch_key_counts() {
         .insert_key(&key("k1", "2026-11-11T10:00:00.000Z"), "h")
         .await
         .unwrap();
-    store.touch_key("k1").await.unwrap();
-    store.touch_key("k1").await.unwrap();
+    let (late, early) = ("2026-11-12T10:00:05.000Z", "2026-11-12T10:00:01.000Z");
+    store.touch_key_by("k1", 3, late).await.unwrap();
+    // Touches may land out of order: last_used_at never goes back.
+    store.touch_key_by("k1", 2, early).await.unwrap();
     let got = store.key_with_hash("k1").await.unwrap().unwrap().0;
-    assert_eq!(got.request_count, 2);
-    assert!(got.last_used_at.is_some());
+    assert_eq!(got.request_count, 5);
+    assert_eq!(got.last_used_at.as_deref(), Some(late));
 }
 
 #[tokio::test]

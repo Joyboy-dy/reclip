@@ -146,7 +146,7 @@ async fn resolve(
     if let Some(auth) = headers.get(AUTHORIZATION).filter(|v| is_bearer_scheme(v)) {
         let invalid = || unauthorized("Invalid or expired API key");
         let token = bearer(auth).ok_or_else(invalid)?;
-        let info = match verify_key(&s.store, token).await {
+        let info = match verify_key(&s.store, &s.key_usage, token).await {
             Ok(info) => info,
             Err(KeyError::Invalid) => return Err(invalid()),
             // Already logged by `verify_key`.
