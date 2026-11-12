@@ -202,3 +202,55 @@ async fn reused_file_is_tightened_to_private() {
     assert_eq!(mode & 0o777, 0o600);
     assert_eq!(store.list_keys().await.unwrap().len(), 1);
 }
+
+fn plain_request(name: &str) -> CreateKeyRequest {
+    CreateKeyRequest {
+        name: name.into(),
+        scopes: None,
+        unlimited: false,
+        expires_in_days: None,
+        limits: None,
+    }
+}
+
+#[tokio::test]
+async fn new_key_revokes_other_active_bot_keys_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let path = dir.path().join("bot.key");
+    let orphan = create_key(&store, plain_request(BOT_KEY_NAME))
+        .await
+        .unwrap();
+    let other = create_key(&store, plain_request("someone-else"))
+        .await
+        .unwrap();
+    // The file is missing, so a new key is made and the orphan is revoked.
+    ensure_bot_key(&store, &path).await.unwrap();
+    let new = read_key(&path);
+    assert!(valid(&store, &new).await);
+    assert!(!valid(&store, &orphan.key).await);
+    assert!(valid(&store, &other.key).await);
+    let active_bot_keys = store
+        .list_keys()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.name == BOT_KEY_NAME && k.revoked_at.is_none())
+        .count();
+    assert_eq!(active_bot_keys, 1);
+}
+
+#[tokio::test]
+async fn a_valid_key_file_revokes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(dir.path()).await;
+    let path = dir.path().join("bot.key");
+    ensure_bot_key(&store, &path).await.unwrap();
+    let kept = read_key(&path);
+    let extra = create_key(&store, plain_request(BOT_KEY_NAME))
+        .await
+        .unwrap();
+    ensure_bot_key(&store, &path).await.unwrap();
+    assert_eq!(read_key(&path), kept);
+    assert!(valid(&store, &extra.key).await);
+}

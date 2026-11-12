@@ -56,7 +56,31 @@ pub async fn ensure_bot_key(store: &Store, path: &Path) -> anyhow::Result<()> {
         return Err(e);
     }
     tracing::info!("bot key written to {}", path.display());
+    revoke_other_bot_keys(store, &created.info.id).await;
     Ok(())
+}
+
+/// Revoke every other active key named [`BOT_KEY_NAME`], so a replaced key
+/// leaves no orphan with delegation power. Failures are logged, not fatal.
+async fn revoke_other_bot_keys(store: &Store, keep_id: &str) {
+    let keys = match store.list_keys().await {
+        Ok(keys) => keys,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not list keys to revoke old bot keys");
+            return;
+        }
+    };
+    for key in keys {
+        if key.name != BOT_KEY_NAME || key.id == keep_id || key.revoked_at.is_some() {
+            continue;
+        }
+        match store.revoke_key(&key.id).await {
+            Ok(_) => tracing::info!(key_id = %key.id, "revoked an old bot key"),
+            Err(e) => {
+                tracing::warn!(key_id = %key.id, error = %e, "could not revoke an old bot key")
+            }
+        }
+    }
 }
 
 async fn current_key_is_valid(store: &Store, path: &Path) -> bool {

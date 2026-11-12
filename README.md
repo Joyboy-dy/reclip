@@ -100,7 +100,7 @@ ReClip ships an optional Telegram bot (`reclip-bot`). Send it a link, pick a for
 2. Put `TELEGRAM_BOT_TOKEN=<token>` and `COMPOSE_PROFILES=telegram` in `deploy/.env`, then run `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build`.
 3. Set `RECLIP_TELEGRAM_BOT_USERNAME` (without the `@`) to show a link in the site footer.
 
-With only a token, Telegram limits uploads to 50 MB. Larger files are sent as a signed download link. For files up to 2 GB, get an `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org) and run `sh deploy/setup.sh deploy/.env`. It writes the `.env`, calls `logOut` once on the official server and enables the `telegram-local` profile (a local Bot API server). Details in French in [deploy/README.md](deploy/README.md).
+With only a token, Telegram limits uploads to 50 MB. Larger files are sent as a signed download link. For files up to 2 GB, get an `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org) and run `TELEGRAM_API_ID=<api_id> TELEGRAM_API_HASH=<api_hash> sh deploy/setup.sh --update deploy/.env`. It backs up the file to `deploy/.env.bak-<time>`, rewrites only the `TELEGRAM_API_*` and `COMPOSE_PROFILES` lines (every other setting is kept), calls `logOut` once on the official server and enables the `telegram-local` profile (a local Bot API server). Without `--update` the script only creates a new file. On Dokploy, call `logOut` yourself and set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_API_URL=http://telegram-bot-api:8081` and `COMPOSE_PROFILES=telegram,telegram-local` in the Environment tab. Details in French in [deploy/README.md](deploy/README.md).
 
 ## Usage
 
