@@ -58,7 +58,7 @@ fn access_defaults() {
         jobs_per_hour: b,
         max_active: c,
     };
-    assert_eq!(c.limits.web, l(120, 100, 80));
+    assert_eq!(c.limits.web, l(120, 300, 200));
     assert_eq!(c.limits.key, l(120, 200, 100));
     assert_eq!(c.limits.tg, l(30, 40, 10));
 }

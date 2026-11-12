@@ -191,7 +191,7 @@ impl Config {
             public_web,
             link_ttl: Duration::from_secs(num("RECLIP_LINK_TTL").unwrap_or(21600)),
             limits: TierLimits {
-                web: limit("WEB", (120, 100, 80)),
+                web: limit("WEB", (120, 300, 200)),
                 key: limit("KEY", (120, 200, 100)),
                 tg: limit("TG", (30, 40, 10)),
             },

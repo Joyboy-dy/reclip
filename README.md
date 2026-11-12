@@ -64,7 +64,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_LIMIT_<TIER>_<LIMIT>` | Rate limits. `TIER` is `WEB`, `KEY` or `TG`; `LIMIT` is `PROBES_PER_MIN`, `JOBS_PER_HOUR` or `ACTIVE`. `0` means unlimited. | see below |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
 
-Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 100 / 80, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10.
+Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 300 / 200, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10.
 
 The downloads directory belongs to ReClip: at startup it deletes the job folders (32 hex characters) it no longer knows, so give it a dedicated folder.
 

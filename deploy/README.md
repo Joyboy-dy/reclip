@@ -98,7 +98,7 @@ Chaque appelant a trois limites : analyses par minute, tâches créées par heur
 
 | Type | Analyses/min | Tâches/h | Actives |
 |---|---|---|---|
-| `WEB` (navigateur) | 120 | 100 | 80 |
+| `WEB` (navigateur) | 120 | 300 | 200 |
 | `KEY` (clé API) | 120 | 200 | 100 |
 | `TG` (bot Telegram) | 30 | 40 | 10 |
 
