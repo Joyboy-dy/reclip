@@ -6,7 +6,7 @@
 use reclip_shared::{ApiKeyInfo, CreateKeyRequest, ErrorCode, Scope};
 use tracing_subscriber::EnvFilter;
 
-use crate::access::keys::create_key;
+use crate::access::keys::{MAX_EXPIRES_DAYS, create_key};
 use crate::config::Config;
 use crate::store::Store;
 
@@ -164,8 +164,12 @@ fn parse_create(mut flags: &[&str]) -> Result<CreateKeyRequest, String> {
             "--name" => name = Some(value.to_string()),
             "--scopes" => req.scopes = Some(parse_scopes(value)?),
             "--expires-days" => match value.parse::<u32>() {
-                Ok(n) if n > 0 => req.expires_in_days = Some(n),
-                _ => return Err(format!("--expires-days must be a positive number: {value}")),
+                Ok(n) if (1..=MAX_EXPIRES_DAYS).contains(&n) => req.expires_in_days = Some(n),
+                _ => {
+                    return Err(format!(
+                        "--expires-days must be between 1 and {MAX_EXPIRES_DAYS}: {value}"
+                    ));
+                }
             },
             other => return Err(format!("unknown option {other}")),
         }
@@ -243,6 +247,15 @@ mod tests {
             &["keys", "create", "--name", "x", "--scopes", "probe,root"],
             &["keys", "create", "--name", "x", "--expires-days", "0"],
             &["keys", "create", "--name", "x", "--expires-days", "soon"],
+            &["keys", "create", "--name", "x", "--expires-days", "36501"],
+            &[
+                "keys",
+                "create",
+                "--name",
+                "x",
+                "--expires-days",
+                "4294967295",
+            ],
             &["keys", "create", "--name", "x", "--color", "red"],
             &["keys", "list", "extra"],
             &["keys", "revoke"],

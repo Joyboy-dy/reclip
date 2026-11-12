@@ -178,3 +178,21 @@ async fn rejected_requests_learn_nothing() {
     assert_eq!(proxied_get(&s, "/api/v1/config").await.status(), 200);
     assert_eq!(s.site.public_url().as_deref(), Some("https://r.example"));
 }
+
+#[tokio::test]
+async fn key_expiry_is_bounded() {
+    let s = TestServer::start(|_| {}).await;
+    for days in [0u64, 36_501, 4_294_967_295] {
+        let r = s
+            .admin()
+            .post(KEYS, json!({"name": "bot", "expires_in_days": days}))
+            .await;
+        let b = expect_error(r, 400, "invalid_request").await;
+        assert_eq!(b["message"], "expires_in_days must be between 1 and 36500");
+    }
+    let r = s
+        .admin()
+        .post(KEYS, json!({"name": "bot", "expires_in_days": 36_500}))
+        .await;
+    assert_eq!(r.status(), 201);
+}
