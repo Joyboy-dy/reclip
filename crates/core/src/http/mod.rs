@@ -4,6 +4,7 @@ pub mod admin;
 pub mod config;
 pub mod events;
 pub mod files;
+pub mod headers;
 pub mod jobs;
 pub mod links;
 pub mod probe;

@@ -5,10 +5,17 @@ export class ApiFailure extends Error {
     public code: ErrorCode,
     message: string,
     public status: number,
+    public retryAfter?: number,
   ) {
     super(message);
     this.name = "ApiFailure";
   }
+}
+
+/** Integer seconds only; an HTTP-date or garbage means "unknown". */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value.trim())) return undefined;
+  return Number(value.trim());
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,7 +35,7 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
     } catch {
       // non-JSON error body: keep defaults
     }
-    throw new ApiFailure(code, message, res.status);
+    throw new ApiFailure(code, message, res.status, parseRetryAfter(res.headers.get("Retry-After")));
   }
   return res;
 }

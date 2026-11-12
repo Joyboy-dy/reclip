@@ -41,6 +41,9 @@
   justify-content: center;
   color: var(--muted);
 }
+.card-thumb .no-thumb.accent {
+  color: var(--accent);
+}
 .card-thumb .no-thumb svg {
   width: 28px;
   height: 28px;
@@ -84,6 +87,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.card-title.error {
+  color: var(--error);
 }
 .card-meta {
   font-size: 0.68rem;

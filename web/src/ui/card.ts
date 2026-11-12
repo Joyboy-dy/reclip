@@ -6,7 +6,7 @@ import { progressBarHtml, updateProgressBar } from "./progress-bar";
 const ERROR_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
 const PLAY_ICON =
-  '<div class="no-thumb" style="color:var(--accent)"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>';
+  '<div class="no-thumb accent"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>';
 const IMAGE_ICON =
   '<div class="no-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>';
 
@@ -118,7 +118,7 @@ export function renderCard(
             <div class="card-error-icon">${ERROR_ICON}</div>
           </div>
           <div class="card-body">
-            <div class="card-title" style="color:var(--error)">Could not fetch video</div>
+            <div class="card-title error">Could not fetch video</div>
             <div class="card-error-msg">${esc(c.error ?? "")}</div>
             <div class="card-error-url">${esc(c.url)}</div>
           </div>
@@ -136,6 +136,9 @@ export function renderCard(
           <div class="card-actions">${actions(c, c.key, c.format ?? format)}</div>
         </div>
       `;
+  if (c.status === "downloading" && c.jobId) {
+    updateProgressBar(el, { progress: c.progress, speed: c.speed, eta: c.eta, state: c.jobState });
+  }
 }
 
 export function renderDownloadAll(onClick: () => void, before: Element | null = null): HTMLButtonElement {

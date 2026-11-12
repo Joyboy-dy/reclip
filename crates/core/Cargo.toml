@@ -30,7 +30,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["process", "time", "rt", "rt-multi-thread", "macros", "io-util", "net", "signal"] }
 axum = "0.8"
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
 url = "2"
 ipnet = "2"
 uuid = { version = "1", features = ["v7"] }

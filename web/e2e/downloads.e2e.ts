@@ -1,7 +1,27 @@
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test as base } from "@playwright/test";
+
+// Every spec listens (before navigation) for CSP violations, which browsers
+// report as console errors or page errors, and fails on any of them.
+const test = base.extend<{ cspGuard: void }>({
+  cspGuard: [
+    async ({ page }, use) => {
+      const seen: string[] = [];
+      const note = (text: string) => {
+        if (text.includes("Content Security Policy")) seen.push(text);
+      };
+      page.on("console", (m) => note(m.text()));
+      page.on("pageerror", (e) => note(e.message));
+      await use();
+      expect(seen, "CSP violations").toEqual([]);
+    },
+    { auto: true },
+  ],
+});
 
 type ApiJob = { id: string; state: string; progress: number | null };
 const TERMINAL = ["done", "failed", "cancelled", "expired"];
+// Mutating API calls need a same-origin Origin header (CSRF guard); page.request sends none.
+const ORIGIN = "http://127.0.0.1:18999";
 
 const apiJobs = async (page: Page): Promise<ApiJob[]> =>
   ((await (await page.request.get("/api/v1/jobs")).json()) as { jobs: ApiJob[] }).jobs;
@@ -10,7 +30,7 @@ const apiJobs = async (page: Page): Promise<ApiJob[]> =>
 // (through the API, with the context's cookie) before the next spec starts.
 test.afterEach(async ({ page }) => {
   for (const job of await apiJobs(page)) {
-    if (!TERMINAL.includes(job.state)) await page.request.post(`/api/v1/jobs/${job.id}/cancel`, { data: {} });
+    if (!TERMINAL.includes(job.state)) await page.request.post(`/api/v1/jobs/${job.id}/cancel`, { data: {}, headers: { Origin: ORIGIN } });
   }
   await expect
     .poll(async () => (await apiJobs(page)).every((j) => TERMINAL.includes(j.state)))
@@ -20,6 +40,8 @@ test.afterEach(async ({ page }) => {
 const barWidth = (page: Page) =>
   page.locator("#cards .card .pbar-fill").first().evaluate((el) => parseFloat((el as HTMLElement).style.width) || 0);
 
+// Public IP literals: the SSRF guard accepts them without DNS, and the fake
+// yt-dlp picks its behaviour from the "ok" / "slow" path.
 async function fetchUrl(page: Page, url: string) {
   await page.goto("/");
   await page.locator("#urls").fill(url);
@@ -32,7 +54,7 @@ async function fetchUrl(page: Page, url: string) {
 test("paste, fetch and download mp3", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "MP3" }).click();
-  await page.locator("#urls").fill("https://ok.example/1");
+  await page.locator("#urls").fill("https://93.184.216.34/ok");
   await page.locator("#goBtn").click();
   const card = page.locator("#cards .card").first();
   await card.getByRole("button", { name: "Download", exact: true }).click();
@@ -41,10 +63,14 @@ test("paste, fetch and download mp3", async ({ page }) => {
 });
 
 test("progress survives a refresh", async ({ page }) => {
-  const card = await fetchUrl(page, "https://slow.example/1");
+  const card = await fetchUrl(page, "https://93.184.216.34/slow");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await expect.poll(async () => (await apiJobs(page)).some((j) => (j.progress ?? 0) > 0)).toBe(true);
   await expect.poll(() => barWidth(page)).toBeGreaterThan(0);
+  // Computed width (what the user sees), not just the inline value.
+  await expect
+    .poll(() => page.locator("#cards .card .pbar-fill").first().evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(0);
   await page.reload();
   const restored = page.locator("#cards .card").first();
   await expect(restored.locator(".pbar")).toBeVisible();
@@ -53,14 +79,14 @@ test("progress survives a refresh", async ({ page }) => {
 });
 
 test("cancel a running download", async ({ page }) => {
-  const card = await fetchUrl(page, "https://slow.example/1");
+  const card = await fetchUrl(page, "https://93.184.216.34/slow");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await card.getByRole("button", { name: "Cancel" }).click();
   await expect(card).toContainText("Download cancelled");
 });
 
 test("remove a finished download", async ({ page }) => {
-  const card = await fetchUrl(page, "https://ok.example/1");
+  const card = await fetchUrl(page, "https://93.184.216.34/ok");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await expect(card.getByRole("button", { name: "Save" })).toBeVisible();
   await card.getByRole("button", { name: "Remove" }).click();

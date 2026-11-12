@@ -64,13 +64,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
     // Admin routes carry their own token check, outside `caller_layer`.
-    Router::new()
+    let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/d/{token}", get(http::links::redeem))
         .merge(http::admin::routes(state.clone()))
         .merge(api)
         .fallback_service(web)
-        .with_state(state)
+        .with_state(state);
+    http::headers::with_security_headers(app)
 }
 
 /// Serve `app` until `signal` fires, then shut down in the order that lets
