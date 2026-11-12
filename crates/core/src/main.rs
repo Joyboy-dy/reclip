@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use reclip_core::access::bot_key::ensure_configured;
 use reclip_core::access::secrets::Site;
 use reclip_core::app::{AppState, router, serve};
 use reclip_core::cli;
@@ -34,6 +35,9 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir).context("create data dir")?;
     std::fs::create_dir_all(&cfg.downloads_dir).context("create downloads dir")?;
     let store = Store::open(&cfg.db_path()).await?;
+    ensure_configured(&store, cfg.bot_key_file.as_deref())
+        .await
+        .context("create bot key")?;
     let site = Site::load(&cfg, &store)
         .await
         .context("load server secrets")?;

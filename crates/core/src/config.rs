@@ -80,6 +80,8 @@ pub struct Config {
     pub admin_session_ttl: Duration,
     /// Chrome origin-trial token for WebMCP; `None` adds no meta tag.
     pub webmcp_trial_token: Option<String>,
+    /// `RECLIP_BOT_KEY_FILE`: where the core writes the Telegram bot key.
+    pub bot_key_file: Option<PathBuf>,
 }
 
 /// Rate limits for one access tier. 0 means unlimited.
@@ -261,6 +263,7 @@ impl Config {
             admin_default_password: get("RECLIP_ADMIN_DEFAULT_PASSWORD").map(Secret),
             admin_session_ttl: Duration::from_secs(12 * 3600),
             webmcp_trial_token: get("RECLIP_WEBMCP_TRIAL_TOKEN"),
+            bot_key_file: get("RECLIP_BOT_KEY_FILE").map(PathBuf::from),
         }
     }
 }

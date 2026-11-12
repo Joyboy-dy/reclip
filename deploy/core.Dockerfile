@@ -52,8 +52,8 @@ COPY --from=denoland/deno:bin-2.5.6 /deno /usr/local/bin/deno
 COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /ffprobe /usr/local/bin/
 
 RUN useradd -m -u 1000 reclip \
-    && mkdir -p /opt/yt-dlp /data /app/web \
-    && chown -R reclip:reclip /opt/yt-dlp /data
+    && mkdir -p /opt/yt-dlp /data /app/web /run/reclip \
+    && chown -R reclip:reclip /opt/yt-dlp /data /run/reclip
 
 # Owned by reclip so `yt-dlp -U` (entrypoint) can replace the binary.
 COPY --from=tools --chown=reclip:reclip /yt-dlp /opt/yt-dlp/yt-dlp

@@ -8,6 +8,9 @@ assets/*.mov
 .env.local
 .env.production
 .env.development
+# setup.sh --update backups and temp files hold the bot token
+.env.bak-*
+.env.tmp.*
 .pytest_cache/
 # YouTube session cookies: never commit them
 cookies*.txt
