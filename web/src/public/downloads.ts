@@ -4,7 +4,17 @@ import { errorText } from "../errors";
 import { cappedFollower } from "../live-slots";
 import { followJob, pollFollow } from "../progress";
 import { rateLimitWait } from "../retry";
-import { type Card, type JobOptions, applyJob, cardFromJob, defaultFormat, entryCard, isTerminal, jobRequest } from "../state";
+import {
+  type Card,
+  type JobOptions,
+  applyJob,
+  cardFromJob,
+  defaultFormat,
+  entryCard,
+  followsPageOptions,
+  isTerminal,
+  jobRequest,
+} from "../state";
 import { clipFromInput } from "./format";
 import { loadHistory } from "./history";
 import { findCard, store, updateCard } from "./store";
@@ -20,12 +30,18 @@ const follow = cappedFollower(
   (id, onJob, onError) => pollFollow(id, onJob, onError),
 );
 
-/** The page options as job options, or the reason they cannot be used. */
-function pageOptions(): { opts?: JobOptions; error?: string } {
+/**
+ * The options a card's download takes, or the reason they cannot be used.
+ * Only a card that follows the page options reads (and checks) them: one that
+ * keeps its own job's options is never blocked by an invalid page clip.
+ */
+function optionsFor(c: Card): { opts?: JobOptions; error?: string } {
   const o = store.get().options;
+  const format = o.media === "video" ? o.container : o.audio;
+  if (!followsPageOptions(c)) return { opts: { format, strip: o.strip } };
   const { clip, error } = clipFromInput({ on: o.clipOn, from: o.clipFrom, to: o.clipTo });
   if (error) return { error };
-  return { opts: { format: o.media === "video" ? o.container : o.audio, clip, strip: o.strip } };
+  return { opts: { format, clip, strip: o.strip } };
 }
 
 /** Let the browser save a file through a temporary link. */
@@ -73,7 +89,7 @@ function track(key: string, jobId: string): void {
 export async function download(key: string): Promise<void> {
   const first = findCard(key);
   if (!first) return;
-  const { opts, error } = pageOptions();
+  const { opts, error } = optionsFor(first);
   if (!opts) {
     updateCard(key, (c) => {
       c.error = error;

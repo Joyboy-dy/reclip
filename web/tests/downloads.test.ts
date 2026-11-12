@@ -133,3 +133,14 @@ test("download again sends the entry's format, quality and playlist_item", async
   const create = calls.find((c) => c.path === "/api/v1/jobs" && c.method === "POST");
   expect(create?.body).toMatchObject({ url: "https://x.com/a/status/1", format: "mkv", format_id: "136", playlist_item: 2 });
 });
+
+test("an invalid page clip does not block a card that keeps its own options", async () => {
+  setOptions({ clipOn: true, clipFrom: "2:00", clipTo: "1:00" });
+  store.set({ cards: [{ key: "j0", url: "https://y/v", status: "error", jobId: "j0", jobState: "failed", format: "mkv",
+    selectedFormat: "136", clip: { start: 5, end: 30 }, strip: true }] });
+  reply = () => json(job());
+  await download("j0");
+  const create = calls.find((c) => c.path === "/api/v1/jobs" && c.method === "POST");
+  expect(create?.body).toMatchObject({ format: "mkv", format_id: "136", clip: { start: 5, end: 30 }, strip_metadata: true });
+  expect(findCard("j0")).toMatchObject({ status: "downloading", jobId: "j1", error: undefined });
+});

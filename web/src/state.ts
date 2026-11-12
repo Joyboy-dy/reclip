@@ -93,6 +93,9 @@ export function cardFromJob(job: Job): Card {
 /** A card can be (re)started from its probe result, its playlist entry or, once restored, from its job. */
 export const canRetry = (c: Card): boolean => Boolean(c.info || c.jobId || c.playlistItem);
 
+/** Whether a (re)start of the card takes the page options (see `jobRequest`). */
+export const followsPageOptions = (c: Card): boolean => Boolean(c.info) || c.format === undefined;
+
 /** The page-wide choices a new download takes. */
 export type JobOptions = { format: MediaFormat; clip?: Clip; strip: boolean };
 
@@ -102,7 +105,7 @@ export type JobOptions = { format: MediaFormat; clip?: Clip; strip: boolean };
  * the history) keeps the format, quality and clip of that job.
  */
 export function jobRequest(c: Card, opts: JobOptions): CreateJobRequest {
-  const own = !c.info && c.format !== undefined;
+  const own = !followsPageOptions(c);
   const format = own ? (c.format as MediaFormat) : opts.format;
   return {
     url: c.url,
