@@ -24,6 +24,23 @@ Passez le service de type « Application / Dockerfile » à **Compose** :
 3. Onglet **Domains** : service `core`, port **8899**.
 4. Déployez. Le conteneur est `healthy` quand `/healthz` répond.
 
+## Image GHCR
+
+À chaque push sur `main`, la CI publie l'image sur GitHub Container Registry :
+
+- `ghcr.io/<propriétaire>/reclip-core:latest` : dernière version de `main` ;
+- `ghcr.io/<propriétaire>/reclip-core:<sha>` : version exacte d'un commit, utile pour revenir en arrière.
+
+Le propriétaire est en minuscules (ex. `ghcr.io/joyboy-dy/reclip-core:latest`).
+
+Pour que Dokploy utilise cette image au lieu de la construire :
+
+1. Dans la copie du `compose.yaml` que Dokploy déploie, remplacez le bloc `build:` du service `core` par la ligne `image: ghcr.io/<propriétaire>/reclip-core:latest`. Les variables d'environnement restent identiques.
+2. Le paquet est privé par défaut. Soit vous le rendez public (page du paquet sur GitHub, réglages « Change visibility »), soit vous ajoutez un registre `ghcr.io` dans Dokploy avec un identifiant GitHub et un jeton ayant le droit `read:packages`.
+3. Redéployez. Pour revenir à une version précise, remplacez `latest` par le SHA du commit voulu.
+
+Le build local (`docker compose -f deploy/compose.yaml up --build`) reste disponible.
+
 ## Cookies YouTube
 
 YouTube refuse la plupart des IP de datacenter (*« Sign in to confirm you're not a bot »*). Pour contourner :
@@ -43,9 +60,27 @@ Les téléchargements passent par une file d'attente équitable :
 - `RECLIP_MAX_CONCURRENT` (défaut `4`) limite le nombre de téléchargements simultanés, tous sites confondus.
 - `RECLIP_MAX_PER_SITE` (défaut `2`) limite le nombre de téléchargements simultanés pour un même site, afin qu'un seul site ne monopolise pas la file.
 
-Les fichiers terminés restent téléchargeables pendant `RECLIP_FILE_TTL` secondes (défaut `86400`, soit 24 h), puis sont supprimés. Un nettoyage passe toutes les `RECLIP_CLEANUP_INTERVAL` secondes (défaut `600`). Les tâches expirées sont retirées de la base SQLite 7 jours après leur expiration.
+Les fichiers terminés restent téléchargeables pendant `RECLIP_FILE_TTL` secondes, puis sont supprimés (détails dans « Stockage »).
 
 Dans l'interface, chaque tâche affiche sa progression en direct et peut être annulée ou retirée. Les cartes sont restaurées après un rafraîchissement de la page.
+
+## Stockage
+
+- Durée de vie d'un fichier terminé : `RECLIP_FILE_TTL` secondes (défaut `21600`, soit 6 h). Un nettoyage passe toutes les `RECLIP_CLEANUP_INTERVAL` secondes (défaut `600`).
+- Taille maximale du dossier des téléchargements : `RECLIP_MAX_DISK` (défaut `5G`). Les valeurs acceptent les suffixes `K`, `M` et `G`, ou un nombre d'octets. Quand la limite est atteinte, les fichiers terminés les plus anciens sont supprimés en premier.
+- Historique : les titres restent affichés pendant `RECLIP_HISTORY_DAYS` jours (défaut `30`), même après la suppression du fichier.
+
+Le volume `data` grossit au maximum jusqu'à `RECLIP_MAX_DISK`, plus la base SQLite et les fichiers en cours de téléchargement. Si l'hôte a peu d'espace, baissez `RECLIP_MAX_DISK` ou `RECLIP_FILE_TTL`.
+
+## Page admin
+
+La page d'administration est sur `/admin`. Elle n'est liée nulle part sur le site : partagez l'adresse seulement avec les administrateurs.
+
+1. Listez les adresses autorisées dans `RECLIP_ADMIN_EMAILS`, séparées par des virgules, en minuscules (ex. `ann@example.com,bob@example.com`).
+2. Définissez `RECLIP_ADMIN_DEFAULT_PASSWORD` : c'est le mot de passe initial de chaque administrateur. Il ne sert qu'à sa **première connexion** sur `/admin`. ReClip demande alors de le remplacer par un mot de passe d'au moins 12 caractères.
+3. Une fois chaque administrateur connecté, retirez `RECLIP_ADMIN_DEFAULT_PASSWORD` de Dokploy ou de `deploy/.env` et redéployez. Ne le versionnez jamais dans Git.
+
+Le jeton admin (`RECLIP_ADMIN_TOKEN`) et la commande `reclip-core keys` restent valables pour les scripts : la page admin ne les remplace pas.
 
 ## Jeton admin
 
