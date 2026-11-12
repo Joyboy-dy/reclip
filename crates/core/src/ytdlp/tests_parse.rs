@@ -108,3 +108,19 @@ fn final_name_is_the_title() {
         "My Video Part 1.mp4"
     );
 }
+
+#[test]
+fn avc3_and_h264_count_as_h264() {
+    let v = json!({"formats": [
+        {"format_id": "vp9", "height": 720, "vcodec": "vp09.00.40.08", "tbr": 5000.0},
+        {"format_id": "avc3", "height": 720, "vcodec": "avc3.64001f", "tbr": 100.0},
+        {"format_id": "h264", "height": 480, "vcodec": "h264", "tbr": 100.0}
+    ]});
+    assert_eq!(
+        opts(&v),
+        [
+            ("avc3".into(), "720p".into(), None),
+            ("h264".into(), "480p".into(), None)
+        ]
+    );
+}

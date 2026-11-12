@@ -92,18 +92,6 @@ fn section(clip: &Clip) -> String {
     }
 }
 
-/// Output arguments for ffmpeg: faststart for mp4/mov, metadata removal.
-fn ffmpeg_output_args(format: MediaFormat, strip_metadata: bool) -> String {
-    let mut v = vec![];
-    if matches!(format, MediaFormat::Mp4 | MediaFormat::Mov) {
-        v.push("-movflags +faststart");
-    }
-    if strip_metadata {
-        v.push("-map_metadata -1");
-    }
-    v.join(" ")
-}
-
 /// Arguments of one download into `out_dir` (`media.<ext>`, `thumb.jpg`).
 pub fn download_args(
     out_dir: &Path,
@@ -138,37 +126,17 @@ pub fn download_args(
         .map(String::from),
     );
     let name = format_name(opts.format);
-    let ffmpeg = ffmpeg_output_args(opts.format, opts.strip_metadata);
+    // Faststart and metadata removal are not done here: yt-dlp skips its
+    // remux/extract postprocessors for files already in the target format.
+    // `finalize` runs them as an explicit ffmpeg pass after the download.
     match format_selector(opts.format, opts.format_id.as_deref()) {
-        None => {
-            a.extend(["-x", "--audio-format", name].map(String::from));
-            if !ffmpeg.is_empty() {
-                a.extend([
-                    "--postprocessor-args".into(),
-                    format!("ExtractAudio+ffmpeg_o:{ffmpeg}"),
-                ]);
-            }
-        }
-        Some(selector) => {
-            a.extend([
-                "-f".into(),
-                selector,
-                "--merge-output-format".into(),
-                name.into(),
-            ]);
-            if !ffmpeg.is_empty() {
-                // One combined ffmpeg output value per postprocessor: Merger
-                // covers separate video+audio streams, VideoRemuxer the
-                // single-file fallback (`/b`) which is never merged.
-                a.extend(["--remux-video".into(), name.into()]);
-                for pp in ["Merger", "VideoRemuxer"] {
-                    a.extend([
-                        "--postprocessor-args".into(),
-                        format!("{pp}+ffmpeg_o:{ffmpeg}"),
-                    ]);
-                }
-            }
-        }
+        None => a.extend(["-x", "--audio-format", name].map(String::from)),
+        Some(selector) => a.extend([
+            "-f".into(),
+            selector,
+            "--merge-output-format".into(),
+            name.into(),
+        ]),
     }
     if let Some(clip) = &opts.clip {
         a.extend(["--download-sections".into(), section(clip)]);

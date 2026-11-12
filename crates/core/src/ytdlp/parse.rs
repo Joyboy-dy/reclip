@@ -18,11 +18,21 @@ pub fn parse_first_json(stdout: &str) -> Result<Value, ApiError> {
         })
 }
 
+/// Codec family of a yt-dlp `vcodec`: lower-case prefix before the first dot.
+fn codec_family(vcodec: Option<&str>) -> Option<String> {
+    Some(vcodec?.split('.').next()?.to_ascii_lowercase())
+}
+
+fn is_h264(vcodec: Option<&str>) -> bool {
+    codec_family(vcodec).is_some_and(|c| matches!(c.as_str(), "avc1" | "avc3" | "h264"))
+}
+
 /// Short codec name of a yt-dlp `vcodec` (`None` for H.264 or unknown).
 fn codec_label(vcodec: Option<&str>) -> Option<String> {
-    let prefix = vcodec?.split('.').next()?.to_ascii_lowercase();
+    let prefix = codec_family(vcodec)?;
     match prefix.as_str() {
-        "" | "none" | "avc1" | "avc3" | "h264" => None,
+        "" | "none" => None,
+        _ if is_h264(vcodec) => None,
         "vp9" | "vp09" => Some("VP9".into()),
         "av01" | "av1" => Some("AV1".into()),
         "hev1" | "hvc1" | "hevc" | "h265" => Some("HEVC".into()),
@@ -33,8 +43,10 @@ fn codec_label(vcodec: Option<&str>) -> Option<String> {
 
 /// Rank within one height: H.264 first, then the highest bitrate.
 fn rank(f: &Value) -> (bool, f64) {
-    let avc = f["vcodec"].as_str().is_some_and(|c| c.starts_with("avc1"));
-    (avc, f["tbr"].as_f64().unwrap_or(0.0))
+    (
+        is_h264(f["vcodec"].as_str()),
+        f["tbr"].as_f64().unwrap_or(0.0),
+    )
 }
 
 /// Build the quality options: one format per height (H.264 preferred, else the

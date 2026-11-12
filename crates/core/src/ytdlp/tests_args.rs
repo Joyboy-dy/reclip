@@ -52,18 +52,6 @@ fn containers() {
 }
 
 #[test]
-fn faststart_for_mp4_and_mov_only() {
-    let want = "Merger+ffmpeg_o:-movflags +faststart";
-    assert!(has(&run(&mp4(), "u"), ["--postprocessor-args", want]));
-    assert!(has(
-        &run(&DownloadOptions::new(MediaFormat::Mov), "u"),
-        ["--postprocessor-args", want]
-    ));
-    let mkv = run(&DownloadOptions::new(MediaFormat::Mkv), "u");
-    assert!(!mkv.iter().any(|x| x.contains("faststart")));
-}
-
-#[test]
 fn audio_formats_extract() {
     for (f, n) in [
         (MediaFormat::Mp3, "mp3"),
@@ -96,48 +84,28 @@ fn clip_sections() {
 }
 
 #[test]
-fn strip_metadata_combines_with_faststart() {
-    let o = DownloadOptions {
-        strip_metadata: true,
-        ..mp4()
-    };
-    let a = run(&o, "u");
-    let want = "-movflags +faststart -map_metadata -1";
-    assert!(has(
-        &a,
-        ["--postprocessor-args", &format!("Merger+ffmpeg_o:{want}")]
-    ));
-    assert!(has(
-        &a,
-        [
-            "--postprocessor-args",
-            &format!("VideoRemuxer+ffmpeg_o:{want}")
-        ]
-    ));
-    assert!(has(&a, ["--remux-video", "mp4"]));
-}
-
-#[test]
-fn strip_metadata_on_audio_and_mkv() {
-    let au = DownloadOptions {
-        strip_metadata: true,
-        ..DownloadOptions::new(MediaFormat::Mp3)
-    };
-    assert!(has(
-        &run(&au, "u"),
-        [
-            "--postprocessor-args",
-            "ExtractAudio+ffmpeg_o:-map_metadata -1"
-        ]
-    ));
-    let mkv = DownloadOptions {
-        strip_metadata: true,
-        ..DownloadOptions::new(MediaFormat::Mkv)
-    };
-    assert!(has(
-        &run(&mkv, "u"),
-        ["--postprocessor-args", "Merger+ffmpeg_o:-map_metadata -1"]
-    ));
+fn ffmpeg_postprocessing_is_left_to_finalize() {
+    // yt-dlp skips remux / extract postprocessors for files already in the
+    // target format, so nothing here may depend on them.
+    for f in [
+        MediaFormat::Mp4,
+        MediaFormat::Mov,
+        MediaFormat::Mkv,
+        MediaFormat::Mp3,
+    ] {
+        let o = DownloadOptions {
+            strip_metadata: true,
+            ..DownloadOptions::new(f)
+        };
+        let a = run(&o, "u");
+        assert!(!a.contains(&"--remux-video".into()), "{f:?}");
+        let ppa: Vec<_> = a.iter().filter(|x| x.contains("ffmpeg_o:")).collect();
+        assert_eq!(
+            ppa,
+            ["ThumbnailsConvertor+ffmpeg_o:-vf scale=160:-2"],
+            "{f:?}"
+        );
+    }
 }
 
 #[test]

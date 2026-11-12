@@ -3,6 +3,7 @@
 pub mod args;
 pub mod download_args;
 pub mod errors;
+pub mod finalize;
 pub mod parse;
 pub mod process;
 pub mod progress;

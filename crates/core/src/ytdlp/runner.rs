@@ -15,6 +15,7 @@ use super::args::{
 };
 use super::download_args::is_x_post;
 use super::errors::classify;
+use super::finalize::finalize;
 use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
@@ -96,7 +97,9 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    if let Some(post) = x_post_info(&out.stdout, url).filter(|_| is_x_post(url)) {
+    if is_x_post(url)
+        && let Some(post) = x_post_info(&out.stdout, url)
+    {
         return Ok(ProbeResponse::Playlist(post));
     }
     let json = parse_first_json(&out.stdout)?;
@@ -146,10 +149,11 @@ pub async fn download_with(
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    match pick_output(job_dir, format) {
-        Some(p) => Ok(p),
-        None => Err(no_file_error(&out)),
-    }
+    let Some(path) = pick_output(job_dir, format) else {
+        return Err(no_file_error(&out));
+    };
+    finalize(cfg, &path, opts, &cancel).await?;
+    Ok(path)
 }
 
 /// Keep the `media.<ext>` file (preferring the requested extension), else the
