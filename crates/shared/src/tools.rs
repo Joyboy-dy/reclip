@@ -118,12 +118,12 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         tool(
             "list_downloads",
-            "List the caller's recent downloads with their state (queued, downloading, processing, done, cancelled, failed, expired) and progress. Use it to find a download id or to see what is still running.",
+            "List the caller's recent downloads with their state (queued, downloading, processing, done, cancelled, failed, expired; in the browser (WebMCP) a download not yet started shows as pending or waiting) and progress. Use it to find a download id or to see what is still running.",
             object(json!({}), &[]),
         ),
         tool(
             "get_download",
-            "Get one download's state, progress and error. When the file is ready (state done) the result also carries a link to fetch it.",
+            "Get one download's state, progress and error (in the browser (WebMCP) a download not yet started shows as pending or waiting). When the file is ready (state done) the result also carries a link to fetch it.",
             object(json!({"id": id_prop()}), &["id"]),
         ),
         tool(

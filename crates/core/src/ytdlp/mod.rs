@@ -14,3 +14,5 @@ pub mod subs;
 mod tests_args;
 #[cfg(test)]
 mod tests_parse;
+#[cfg(test)]
+mod tests_subs;

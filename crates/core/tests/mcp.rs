@@ -5,8 +5,10 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{ON_BEHALF_OF, TestServer};
-use reclip_shared::Scope;
+use reclip_core::access::keys::sha256_hex;
+use reclip_core::store::{now, now_minus};
 use reclip_shared::tools::tool_defs;
+use reclip_shared::{ApiKeyInfo, Scope};
 use reqwest::{Client, RequestBuilder};
 use serde_json::{Value, json};
 
@@ -291,4 +293,96 @@ async fn transcript_tool_returns_text() {
         mcp.error_code("get_transcript", args).await,
         "invalid_request"
     );
+}
+
+#[tokio::test]
+async fn transcript_on_a_private_target_is_refused() {
+    let s = TestServer::start(|_| {}).await;
+    let mcp = Mcp::agent(&s, &[Scope::Probe]).await;
+    let code = mcp
+        .error_code("get_transcript", json!({"url": "http://127.0.0.1/"}))
+        .await;
+    assert_eq!(code, "forbidden_target");
+}
+
+#[tokio::test]
+async fn expired_key_is_refused() {
+    let s = TestServer::start(|_| {}).await;
+    let secret = "z".repeat(43);
+    let expired = ApiKeyInfo {
+        id: "expired1".into(),
+        name: "old".into(),
+        scopes: Scope::default_set(),
+        unlimited: false,
+        limits: Default::default(),
+        created_at: now(),
+        expires_at: Some(now_minus(Duration::from_secs(5))),
+        revoked_at: None,
+        last_used_at: None,
+        request_count: 0,
+    };
+    let hash = sha256_hex(&secret);
+    s.store.insert_key(&expired, &hash).await.unwrap();
+    let mcp = Mcp::new(&s, Some(&format!("rck_expired1_{secret}")));
+    expect_status(mcp.post("tools/list", json!({})), 401, "unauthorized").await;
+}
+
+#[tokio::test]
+async fn quality_with_an_audio_format_is_refused() {
+    let s = TestServer::start(|_| {}).await;
+    let mcp = Mcp::agent(&s, &[Scope::JobsCreate, Scope::JobsRead]).await;
+    for format in ["mp3", "m4a", "opus", "flac", "wav"] {
+        let args = json!({"url": "https://ok", "format": format, "quality": "137"});
+        assert_eq!(
+            mcp.error_code("start_download", args).await,
+            "invalid_request"
+        );
+    }
+    let args = json!({"url": "https://ok", "format": "mp3"});
+    assert!(mcp.tool("start_download", args).await.is_ok());
+}
+
+#[tokio::test]
+async fn oversized_bodies_are_refused() {
+    let s = TestServer::start(|_| {}).await;
+    let mcp = Mcp::agent(&s, &[Scope::Probe]).await;
+    let pad = "a".repeat(128 * 1024);
+    let r = mcp
+        .post(
+            "tools/call",
+            json!({"name": "probe_media", "arguments": {"url": pad}}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_client_error(), "{}", r.status());
+    // A normal call still works afterwards.
+    assert!(
+        mcp.tool("probe_media", json!({"url": "https://ok"}))
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn oauth_discovery_is_a_json_404() {
+    let s = TestServer::start(|_| {}).await;
+    let c = Client::new();
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-authorization-server/x/y",
+    ] {
+        let r = c.get(format!("{}{path}", s.base)).send().await.unwrap();
+        assert_eq!(r.status(), 404, "{path}");
+        assert!(
+            r.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .contains("json")
+        );
+        let b: Value = r.json().await.unwrap();
+        assert_eq!(b["code"], "invalid_request", "{path}");
+    }
 }

@@ -24,6 +24,9 @@ use crate::app::AppState;
 
 pub use tools::Tools;
 
+/// Largest `/mcp` request body (a JSON-RPC call with a link and options).
+pub const MAX_BODY_BYTES: usize = 64 * 1024;
+
 /// The `/mcp` route, with its own key check (it is not behind `caller_layer`,
 /// which would let cookie visitors in).
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -31,6 +34,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .with_legacy_session_mode(false)
         .with_json_response(true)
         .with_sse_keep_alive(None)
+        // Tool arguments are tiny; do not rely on the library default.
+        .with_max_request_body_bytes(MAX_BODY_BYTES)
         // A public server: the API key, not the Host header, is the gate.
         // Safe against DNS rebinding because only `Bearer` keys are accepted
         // here: no cookie or other ambient credential a browser would send.

@@ -2,7 +2,7 @@
 //! Called by the HTTP route and by the MCP server, so both apply the same
 //! rules to the same caller.
 
-use reclip_shared::{Scope, Transcript, TranscriptRequest};
+use reclip_shared::{ApiError, ErrorCode, Scope, Transcript, TranscriptRequest};
 
 use crate::access::caller::Caller;
 use crate::access::limits::RateInfo;
@@ -11,6 +11,7 @@ use crate::access::ssrf::check_target;
 use crate::app::AppState;
 use crate::http::validate_url;
 pub use crate::service::ServiceError;
+use crate::ytdlp::args::is_playlist_only;
 use crate::ytdlp::{runner, subs::validate_language};
 
 /// Subtitles of `req.url` as text. Needs the `probe` scope and counts as one
@@ -22,6 +23,13 @@ pub async fn transcript(
     req: TranscriptRequest,
 ) -> Result<(Transcript, Option<RateInfo>), ServiceError> {
     let url = validate_url(&req.url)?;
+    if is_playlist_only(&url) {
+        return Err(ApiError {
+            code: ErrorCode::InvalidRequest,
+            message: "Pass a single video link, not a playlist".into(),
+        }
+        .into());
+    }
     let language = req.language.as_deref().map(validate_language).transpose()?;
     caller.require(Scope::Probe)?;
     check_target(&url, &s.resolver).await?;

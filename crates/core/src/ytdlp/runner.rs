@@ -147,17 +147,25 @@ pub async fn transcript(
         });
     };
     let root = cfg.data_dir.join("tmp");
-    std::fs::create_dir_all(&root).map_err(io_err)?;
-    let dir = tempfile::Builder::new()
-        .prefix(TMP_PREFIX)
-        .tempdir_in(&root)
-        .map_err(io_err)?;
+    let dir = tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&root)?;
+        tempfile::Builder::new()
+            .prefix(TMP_PREFIX)
+            .tempdir_in(&root)
+    })
+    .await
+    .map_err(|e| io_err(std::io::Error::other(e)))?
+    .map_err(io_err)?;
     let args = subs_args(cfg, url, &track.key, dir.path());
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    let Some(text) = read_track(dir.path(), &track.key) else {
+    let (path, key) = (dir.path().to_path_buf(), track.key.clone());
+    let read = tokio::task::spawn_blocking(move || read_track(&path, &key))
+        .await
+        .map_err(|e| io_err(std::io::Error::other(e)))?;
+    let Some(text) = read else {
         // E.g. an HTTP 429 on the subtitle file: yt-dlp warns and exits 0.
         tracing::warn!(stderr = %out.stderr.trim(), "subtitle track listed but not written");
         return Err(err(

@@ -88,7 +88,7 @@
   },
   {
     "name": "list_downloads",
-    "description": "List the caller's recent downloads with their state (queued, downloading, processing, done, cancelled, failed, expired) and progress. Use it to find a download id or to see what is still running.",
+    "description": "List the caller's recent downloads with their state (queued, downloading, processing, done, cancelled, failed, expired; in the browser (WebMCP) a download not yet started shows as pending or waiting) and progress. Use it to find a download id or to see what is still running.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -99,7 +99,7 @@
   },
   {
     "name": "get_download",
-    "description": "Get one download's state, progress and error. When the file is ready (state done) the result also carries a link to fetch it.",
+    "description": "Get one download's state, progress and error (in the browser (WebMCP) a download not yet started shows as pending or waiting). When the file is ready (state done) the result also carries a link to fetch it.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,

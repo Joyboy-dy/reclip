@@ -79,6 +79,24 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/history/{id}/thumb", get(http::history::thumb))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
+    // OAuth discovery (RFC 9728 / 8414) is not offered: answer JSON, not the SPA.
+    let app_oauth = Router::new()
+        .route(
+            "/.well-known/oauth-protected-resource",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/{*rest}",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            any(http::api_not_found),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server/{*rest}",
+            any(http::api_not_found),
+        );
     // Admin routes and `/mcp` carry their own checks, outside `caller_layer`.
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -92,6 +110,7 @@ pub fn router(state: AppState) -> Router {
         .merge(http::admin::routes(state.clone()))
         .merge(http::admin_session::routes())
         .merge(mcp::routes(state.clone()))
+        .merge(app_oauth)
         .merge(api)
         .fallback_service(web)
         .with_state(state);
