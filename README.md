@@ -47,7 +47,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_WEB_DIR` | Built frontend to serve. | `./web/dist` |
 | `RECLIP_YTDLP_BIN` | yt-dlp binary to run. | `yt-dlp` |
 | `RECLIP_COOKIES` | Path to a Netscape `cookies.txt`, passed to yt-dlp. Required for YouTube on most servers. | none |
-| `RECLIP_PROXY` | Proxy for every yt-dlp call, e.g. `socks5://127.0.0.1:7897`. | none |
+| `RECLIP_PROXY` | Proxy for every yt-dlp call, e.g. `socks5://127.0.0.1:7897`. With the `warp` compose profile, `socks5://warp:1080` sends downloads through Cloudflare WARP (helps when YouTube blocks the server). | none |
 | `RECLIP_JS_RUNTIME` | Force the JS runtime for YouTube challenges (`deno`, `bun`, `node`, `quickjs`, or `name:/path`). Detected automatically otherwise. | auto |
 | `RECLIP_JOB_TIMEOUT` | Maximum duration of a job, in seconds. | `1800` |
 | `RECLIP_PLAYLIST_LIMIT` | Maximum number of videos taken from a playlist. | `50` |
@@ -82,7 +82,7 @@ Admins sign in at `/admin`. The page is not linked from the site, so share the a
 
 ### YouTube on a server
 
-YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. To get past it:
+YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. The simplest fix needs no account: start the `warp` compose profile and set `RECLIP_PROXY=socks5://warp:1080`, so yt-dlp goes out through Cloudflare WARP (e.g. `COMPOSE_PROFILES=telegram,warp`). If YouTube blocks that too, use cookies:
 
 1. Use a secondary Google account: accounts used with yt-dlp can get flagged.
 2. In a private browser window, log in to YouTube, export the cookies with an extension such as *Get cookies.txt LOCALLY*, then close the window without browsing further (YouTube rotates the cookies of open sessions).
