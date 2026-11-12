@@ -223,13 +223,25 @@ Puis `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build
 Le profil `telegram-local` démarre un serveur Bot API local. Le bot peut alors envoyer des fichiers jusqu'à 2 000 Mo.
 
 1. Sur [my.telegram.org](https://my.telegram.org), ouvrez « API development tools » et créez une application. Notez `api_id` et `api_hash`.
-2. Telegram exige un appel `logOut` unique sur le serveur officiel avant de passer au serveur local. Le script s'en charge :
+2. Telegram exige un appel `logOut` unique sur le serveur officiel avant de passer au serveur local. Le script s'en charge.
+
+   Nouvelle installation (le fichier n'existe pas encore) :
 
    ```
    sh deploy/setup.sh deploy/.env
    ```
 
-   Il lit `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` et `RECLIP_PUBLIC_URL` dans l'environnement, ou les demande. Il refuse d'écraser un fichier existant, n'affiche jamais le jeton et écrit le fichier en mode 600. Avec `--no-logout`, il saute l'appel `logOut`.
+   Il lit `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` et `RECLIP_PUBLIC_URL` dans l'environnement, ou les demande. Sans `--update`, il refuse d'écraser un fichier existant. Il n'affiche jamais le jeton et écrit le fichier en mode 600. Avec `--no-logout`, il saute l'appel `logOut`.
+
+   Installation existante (passage du mode simple au mode 2 Go, `deploy/.env` déjà rempli) :
+
+   ```
+   TELEGRAM_API_ID=<api_id> TELEGRAM_API_HASH=<api_hash> sh deploy/setup.sh --update deploy/.env
+   ```
+
+   Le script copie d'abord le fichier vers `deploy/.env.bak-<heure unix>` (mode 600), puis réécrit seulement `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_API_URL` et `COMPOSE_PROFILES`. Toutes les autres lignes (jeton, `RECLIP_ADMIN_EMAILS`, `RECLIP_PUBLIC_URL`, cookies, limites...) restent intactes. Le jeton est lu dans l'environnement ou dans ce fichier, jamais affiché. Relancez ensuite avec `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d`.
+
+   Sur Dokploy, il n'y a pas de fichier à modifier : appelez `logOut` à la main (étape 3), puis ajoutez les variables ci-dessous dans l'onglet Environment et redéployez.
 3. À la main, sans le script : `curl -X POST https://api.telegram.org/bot<jeton>/logOut`, puis dans `deploy/.env` :
 
    ```
@@ -240,7 +252,7 @@ Le profil `telegram-local` démarre un serveur Bot API local. Le bot peut alors 
    COMPOSE_PROFILES=telegram,telegram-local
    ```
 
-Après `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local (`curl -X POST http://telegram-bot-api:8081/bot<jeton>/close` depuis le r�seau du conteneur) et attendre une dizaine de minutes. Le volume `tg-data` garde les fichiers envoy�s et grossit avec le temps.
+AprÃ¨s `logOut`, le jeton ne marche plus sur le serveur officiel pendant une dizaine de minutes. Pour revenir au mode simple, retirez `TELEGRAM_API_URL` et le profil `telegram-local`. Il faut d'abord appeler `/close` sur le serveur local (`curl -X POST http://telegram-bot-api:8081/bot<jeton>/close` depuis le réseau du conteneur) et attendre une dizaine de minutes. Le volume `tg-data` garde les fichiers envoyés et grossit avec le temps.
 
 ### Clé et état
 

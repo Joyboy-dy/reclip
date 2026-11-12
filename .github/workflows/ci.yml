@@ -103,7 +103,7 @@ jobs:
           fi
       - name: Check image size (uncompressed, max 800 MB)
         run: |
-          size=$(docker image inspect reclip-core:ci --format '{{.Size}}')
+          size=$(docker history --human=false --format '{{.Size}}' reclip-core:ci | awk '{s+=$1} END {print s}')
           echo "Image size: $((size / 1024 / 1024)) MB"
           if [ "$size" -gt 838860800 ]; then
             echo "::error::Image is larger than 800 MB"
@@ -120,7 +120,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=bot
       - name: Check bot image size (uncompressed, max 40 MB)
         run: |
-          size=$(docker image inspect reclip-bot:ci --format '{{.Size}}')
+          size=$(docker history --human=false --format '{{.Size}}' reclip-bot:ci | awk '{s+=$1} END {print s}')
           echo "Bot image size: $((size / 1024 / 1024)) MB"
           if [ "$size" -gt 41943040 ]; then
             echo "::error::Bot image is larger than 40 MB"
