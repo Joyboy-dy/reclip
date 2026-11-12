@@ -73,8 +73,7 @@ test("clean up menu opens with its four actions", async ({ page }) => {
   await expect(menu).toHaveCount(0);
 });
 
-// Needs GET /api/v1/history (Task B2; 501 until then). The controller re-enables it after merge.
-test.fixme("a finished download is listed in the history with Save, and can be removed", async ({ page }) => {
+test("a finished download is listed in the history with Save, and can be removed", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/ok");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
@@ -84,8 +83,7 @@ test.fixme("a finished download is listed in the history with Save, and can be r
   await expect(page.locator("[data-history-row]")).toHaveCount(0);
 });
 
-// Needs POST /api/v1/jobs/{id}/resume and resumable jobs (Task B2; 501 until then).
-test.fixme("a cancelled download resumes", async ({ page }) => {
+test("a cancelled download resumes", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);

@@ -39,6 +39,7 @@ export default defineConfig({
     command: path.join(targetDir, `reclip-core${exe}`),
     env: {
       RECLIP_YTDLP_BIN: path.join(targetDir, `fake-ytdlp${exe}`),
+      RECLIP_FFMPEG_BIN: path.join(targetDir, `fake-ffmpeg${exe}`),
       RECLIP_PORT: String(port),
       RECLIP_HOST: "127.0.0.1",
       RECLIP_DATA_DIR: dataDir,
