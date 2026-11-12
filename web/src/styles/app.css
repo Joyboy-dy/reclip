@@ -1,0 +1,54 @@
+@import "tailwindcss";
+@source "../";
+
+/* Tokens copied from the approved mockups (reclip.css). */
+@theme {
+  --color-bg: #f4f1eb;
+  --color-fg: #3a3a38;
+  --color-accent: #e85d2a;
+  --color-accent-hover: #d04e1f;
+  --color-accent-soft: #fbe4da;
+  --color-accent-ink: #b8461c;
+  --color-muted: #6b6858;
+  --color-line: #e2ded6;
+  --color-line-soft: #ebe8e2;
+  --color-card: #fff;
+  --color-field: #f8f6f2;
+  --color-success: #2d8a4e;
+  --color-success-ink: #22673a;
+  --color-success-soft: #e3f1e7;
+  --color-error: #b23434;
+  --color-error-ink: #8f2a2a;
+  --color-error-soft: #f1e6e6;
+  --color-scrim: #8a8780;
+  --color-thumb: #d9d3c7;
+  --color-code: #fbfaf7;
+
+  --radius: 14px;
+  --radius-card: 14px;
+
+  --font-mono: "DM Mono", monospace;
+  --font-serif: "Instrument Serif", serif;
+
+  --shadow-menu: 0 12px 32px rgba(30, 28, 24, 0.14);
+  --shadow-tip: 0 8px 24px rgba(30, 28, 24, 0.2);
+  --shadow-dialog: 0 20px 60px rgba(30, 28, 24, 0.25);
+  --shadow-sheet: 0 -12px 40px rgba(30, 28, 24, 0.2);
+  --shadow-focus: 0 0 0 3px rgba(232, 93, 42, 0.08);
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  a {
+    color: var(--color-muted);
+  }
+  a:hover {
+    color: var(--color-accent);
+  }
+}
