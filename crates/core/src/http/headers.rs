@@ -16,11 +16,15 @@ fn set(name: HeaderName, value: &'static str) -> SetResponseHeaderLayer<HeaderVa
 
 /// Wrap `app` so every response (site, API, downloads, errors) carries the headers.
 pub fn with_security_headers(app: Router) -> Router {
-    app.layer(set(header::CONTENT_SECURITY_POLICY, CSP))
-        .layer(set(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
-        .layer(set(header::REFERRER_POLICY, "no-referrer"))
-        .layer(set(
-            HeaderName::from_static("permissions-policy"),
-            PERMISSIONS,
-        ))
+    // HTML pages set their own CSP (with a nonce): keep it.
+    app.layer(SetResponseHeaderLayer::if_not_present(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    ))
+    .layer(set(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
+    .layer(set(header::REFERRER_POLICY, "no-referrer"))
+    .layer(set(
+        HeaderName::from_static("permissions-policy"),
+        PERMISSIONS,
+    ))
 }

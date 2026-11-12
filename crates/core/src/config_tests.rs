@@ -23,7 +23,7 @@ fn config_defaults_and_overrides() {
 fn queue_and_lifecycle_settings() {
     let c = Config::from_env(&|_| None);
     assert_eq!((c.max_concurrent, c.max_per_site), (4, 2));
-    assert_eq!(c.file_ttl, Duration::from_secs(86400));
+    assert_eq!(c.file_ttl, Duration::from_secs(21600));
     assert_eq!(c.cleanup_interval, Duration::from_secs(600));
     let env = |k: &str| match k {
         "RECLIP_MAX_CONCURRENT" => Some("8".into()),
@@ -39,6 +39,59 @@ fn queue_and_lifecycle_settings() {
     // Zero would stall the queue forever: at least one slot each.
     let c = Config::from_env(&|k| k.starts_with("RECLIP_MAX_").then(|| "0".into()));
     assert_eq!((c.max_concurrent, c.max_per_site), (1, 1));
+}
+
+#[test]
+fn phase3b_defaults() {
+    let c = Config::from_env(&|_| None);
+    assert_eq!(c.concurrent_fragments, 4);
+    assert_eq!(c.impersonate.as_deref(), Some("chrome"));
+    assert_eq!(c.max_disk, 5 * 1024 * 1024 * 1024);
+    assert_eq!(c.history_days, 30);
+    assert!(c.admin_emails.is_empty() && c.admin_default_password.is_none());
+    assert_eq!(c.admin_session_ttl, Duration::from_secs(12 * 3600));
+}
+
+#[test]
+fn phase3b_overrides() {
+    let env = |k: &str| match k {
+        "RECLIP_CONCURRENT_FRAGMENTS" => Some("8".into()),
+        "RECLIP_IMPERSONATE" => Some("safari".into()),
+        "RECLIP_MAX_DISK" => Some("5G".into()),
+        "RECLIP_HISTORY_DAYS" => Some("7".into()),
+        "RECLIP_ADMIN_EMAILS" => Some(" Ann@Example.com, bob@example.com ,,".into()),
+        "RECLIP_ADMIN_DEFAULT_PASSWORD" => Some("first-login-pw".into()),
+        _ => None,
+    };
+    let c = Config::from_env(&env);
+    assert_eq!(c.concurrent_fragments, 8);
+    assert_eq!(c.impersonate.as_deref(), Some("safari"));
+    assert_eq!(c.max_disk, 5_368_709_120);
+    assert_eq!(c.history_days, 7);
+    assert_eq!(c.admin_emails, ["ann@example.com", "bob@example.com"]);
+    let pw = c.admin_default_password.as_ref().unwrap();
+    assert_eq!(pw.expose(), "first-login-pw");
+    assert_eq!(format!("{pw:?}"), "<redacted>");
+}
+
+#[test]
+fn empty_impersonate_disables_it() {
+    let c = Config::from_env(&|k| (k == "RECLIP_IMPERSONATE").then(|| "".into()));
+    assert_eq!(c.impersonate, None);
+}
+
+#[test]
+fn size_suffixes() {
+    for (raw, want) in [
+        ("1024", Some(1024)),
+        ("2K", Some(2048)),
+        ("3m", Some(3 << 20)),
+        ("5G", Some(5 << 30)),
+        ("x", None),
+        ("", None),
+    ] {
+        assert_eq!(parse_size(raw), want, "{raw}");
+    }
 }
 
 #[test]

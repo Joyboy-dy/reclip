@@ -34,6 +34,15 @@ impl AdmissionLocks {
     }
 }
 
+/// The caller's admission guard when an active-jobs cap applies to it: hold
+/// it from [`check_create`] until the job is inserted or requeued.
+pub async fn admission(s: &AppState, c: &Caller) -> Option<OwnedMutexGuard<()>> {
+    match c.limits {
+        Some(l) if l.max_active > 0 => Some(s.admission.lock(&c.quota_key).await),
+        _ => None,
+    }
+}
+
 /// Seconds a client is told to wait when the active-jobs cap refuses.
 const ACTIVE_RETRY_AFTER: u64 = 30;
 

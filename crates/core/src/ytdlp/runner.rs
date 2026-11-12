@@ -9,9 +9,14 @@ use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
-use super::args::{SessionArgs, cookies_available, download_args, probe_args, session_args};
+use super::args::{
+    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
+    session_args,
+};
+use super::download_args::is_x_post;
 use super::errors::classify;
-use super::parse::{parse_first_json, playlist_info, video_info};
+use super::finalize::finalize;
+use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
 use crate::config::Config;
@@ -21,6 +26,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const KILL_GRACE: Duration = Duration::from_secs(5);
 /// stdout lines kept from a download for failure classification.
 const DOWNLOAD_TAIL: usize = 200;
+/// Thumbnail written next to the media; moved by the job worker.
+const THUMB_NAME: &str = "thumb.jpg";
+/// Temp output of the ffmpeg pass (see `finalize`).
+const FINALIZE_PREFIX: &str = "media.finalize.";
 
 fn err(code: ErrorCode, message: impl Into<String>) -> ApiError {
     ApiError {
@@ -90,6 +99,11 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
+    if is_x_post(url)
+        && let Some(post) = x_post_info(&out.stdout, url)
+    {
+        return Ok(ProbeResponse::Playlist(post));
+    }
     let json = parse_first_json(&out.stdout)?;
     if url.contains("list=") {
         Ok(ProbeResponse::Playlist(playlist_info(&json)))
@@ -107,18 +121,27 @@ pub async fn download(
     format: MediaFormat,
     format_id: Option<&str>,
     url: &str,
+    on_progress: impl FnMut(ProgressEvent) + Send,
+    cancel: CancellationToken,
+) -> Result<PathBuf, ApiError> {
+    let opts = DownloadOptions {
+        format_id: format_id.map(str::to_string),
+        ..DownloadOptions::new(format)
+    };
+    download_with(cfg, job_dir, &opts, url, on_progress, cancel).await
+}
+
+/// [`download`] with the full set of options.
+pub async fn download_with(
+    cfg: &Config,
+    job_dir: &Path,
+    opts: &DownloadOptions,
+    url: &str,
     mut on_progress: impl FnMut(ProgressEvent) + Send,
     cancel: CancellationToken,
 ) -> Result<PathBuf, ApiError> {
-    let template = job_dir.join("media.%(ext)s");
-    let args = download_args(
-        &template.to_string_lossy(),
-        format,
-        format_id,
-        &cfg.max_filesize,
-        cfg.max_duration,
-        url,
-    );
+    let args = download_args(job_dir, opts, cfg, url);
+    let format = opts.format;
     let on_line = |line: &str| {
         if let Some(event) = parse_line(line) {
             on_progress(event);
@@ -128,23 +151,36 @@ pub async fn download(
     if !out.status.success() {
         return Err(failure(cfg, &out));
     }
-    match pick_output(job_dir, format) {
-        Some(p) => Ok(p),
-        None => Err(no_file_error(&out)),
-    }
+    let Some(path) = pick_output(job_dir, format) else {
+        return Err(no_file_error(&out));
+    };
+    // The bytes are all in: show processing while the ffmpeg pass runs, even
+    // when yt-dlp printed no postprocessor line (single-file source).
+    on_progress(ProgressEvent::Processing);
+    finalize(cfg, &path, opts, &cancel).await?;
+    Ok(path)
 }
 
-/// Keep the `.mp4` (or `.mp3`) file, else the first file; delete the rest.
+/// The media is a file that is neither the `thumb.jpg` thumbnail (kept for
+/// the job), a leftover `*.part` nor a `media.finalize.*` temp file left by
+/// an interrupted ffmpeg pass.
+fn is_media(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    path.is_file()
+        && name != THUMB_NAME
+        && !name.ends_with(".part")
+        && !name.starts_with(FINALIZE_PREFIX)
+}
+
+/// Keep the `media.<ext>` file (preferring the requested extension), else the
+/// first media file; delete the other media files.
 fn pick_output(job_dir: &Path, format: MediaFormat) -> Option<PathBuf> {
-    let want = match format {
-        MediaFormat::Mp4 => "mp4",
-        MediaFormat::Mp3 => "mp3",
-    };
+    let want = format_name(format);
     let mut files: Vec<PathBuf> = std::fs::read_dir(job_dir)
         .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.is_file())
+        .filter(|p| is_media(p))
         .collect();
     files.sort();
     let keep = files
@@ -173,4 +209,27 @@ fn no_file_error(out: &Captured) -> ApiError {
         ErrorCode::Internal,
         "download finished but no file was found",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leftover_finalize_temp_never_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "media.finalize.mp4",
+            "media.mp4",
+            "thumb.jpg",
+            "media.webm.part",
+        ] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let picked = pick_output(dir.path(), MediaFormat::Mp4).unwrap();
+        assert_eq!(picked.file_name().unwrap(), "media.mp4");
+        let only_temp = tempfile::tempdir().unwrap();
+        std::fs::write(only_temp.path().join("media.finalize.mkv"), "x").unwrap();
+        assert!(pick_output(only_temp.path(), MediaFormat::Mkv).is_none());
+    }
 }

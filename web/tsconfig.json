@@ -4,10 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src", "tests", "build.ts"]
 }

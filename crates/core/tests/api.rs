@@ -248,3 +248,56 @@ async fn legacy_ownerless_jobs_are_unreachable() {
     let l: Value = fresh.get("/api/v1/jobs").await.json().await.unwrap();
     assert!(l["jobs"].as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn rejects_bad_clip_and_playlist_item() {
+    let s = start().await;
+    let cases = [
+        (
+            json!({"clip": {"start": -1.0}}),
+            "Clip start must be a time of 0 or more",
+        ),
+        (
+            json!({"clip": {"start": 5.0, "end": 5.0}}),
+            "Clip end must come after its start",
+        ),
+        (
+            json!({"clip": {"start": 5.0, "end": 2.0}}),
+            "Clip end must come after its start",
+        ),
+        (
+            json!({"playlist_item": 0}),
+            "Playlist item must be 1 or more",
+        ),
+    ];
+    for (extra, message) in cases {
+        let mut body = json!({"url": "https://ok", "format": "mp4"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let r = s.post("/api/v1/jobs", body).await;
+        assert_eq!(r.status(), 400, "{extra}");
+        let b: Value = r.json().await.unwrap();
+        assert_eq!(
+            (b["code"].as_str(), b["message"].as_str()),
+            (Some("invalid_request"), Some(message))
+        );
+    }
+    let jobs: Value = s.get("/api/v1/jobs").await.json().await.unwrap();
+    assert!(jobs["jobs"].as_array().unwrap().is_empty());
+    // Valid bounds are accepted: a clip to the end, the first item.
+    let ok =
+        json!({"url": "https://ok", "format": "mp4", "clip": {"start": 0.0}, "playlist_item": 1});
+    let r = s.post("/api/v1/jobs", ok).await;
+    assert_eq!(r.status(), 202);
+    let job: Value = r.json().await.unwrap();
+    assert_eq!(job["playlist_item"], 1);
+    let id = job["id"].as_str().unwrap();
+    let stored: Value = s
+        .get(&format!("/api/v1/jobs/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(stored["playlist_item"], 1);
+}

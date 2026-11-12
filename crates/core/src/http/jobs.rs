@@ -2,15 +2,36 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use reclip_shared::{CreateJobRequest, Job, JobList, Scope};
+use reclip_shared::{ApiError, CreateJobRequest, ErrorCode, Job, JobList, Scope};
 
-use super::{ApiJson, HttpError, validate_url};
+use super::{ApiJson, HttpError, api_error, validate_url};
 use crate::access::caller::Caller;
 use crate::access::limits::RateInfo;
-use crate::access::quota::check_create;
+use crate::access::quota::{admission, check_create};
 use crate::access::ssrf::check_target;
 use crate::app::AppState;
-use crate::jobs::ManagerError;
+use crate::jobs::{ManagerError, not_resumable};
+
+/// Check the options the request body cannot express by its types alone.
+/// A resumed job reuses the stored values, checked here at creation.
+fn validate_options(req: &CreateJobRequest) -> Result<(), ApiError> {
+    let invalid = |message| Err(api_error(ErrorCode::InvalidRequest, message));
+    if let Some(clip) = req.clip {
+        if !clip.start.is_finite() || clip.start < 0.0 {
+            return invalid("Clip start must be a time of 0 or more");
+        }
+        if clip
+            .end
+            .is_some_and(|end| !end.is_finite() || end <= clip.start)
+        {
+            return invalid("Clip end must come after its start");
+        }
+    }
+    if req.playlist_item == Some(0) {
+        return invalid("Playlist item must be 1 or more");
+    }
+    Ok(())
+}
 
 pub async fn create(
     State(s): State<AppState>,
@@ -18,6 +39,7 @@ pub async fn create(
     ApiJson(mut req): ApiJson<CreateJobRequest>,
 ) -> Result<(StatusCode, Option<RateInfo>, Json<Job>), Response> {
     req.url = validate_url(&req.url).map_err(|e| HttpError(e).into_response())?;
+    validate_options(&req).map_err(|e| HttpError(e).into_response())?;
     caller
         .require(Scope::JobsCreate)
         .map_err(IntoResponse::into_response)?;
@@ -26,10 +48,7 @@ pub async fn create(
         .map_err(|e| HttpError(e).into_response())?;
     // The cap check and the insert must not interleave with another create
     // for the same quota key.
-    let _admission = match caller.limits {
-        Some(l) if l.max_active > 0 => Some(s.admission.lock(&caller.quota_key).await),
-        _ => None,
-    };
+    let _admission = admission(&s, &caller).await;
     let rate = check_create(&s, &caller).await?;
     let job = s
         .jobs
@@ -61,6 +80,38 @@ pub async fn cancel(
 ) -> Result<Json<Job>, ManagerError> {
     caller.require(Scope::JobsCancel)?;
     Ok(Json(s.jobs.cancel(&caller.owner, &id).await?))
+}
+
+/// Requeue a cancelled or interrupted job (202), under the same checks and
+/// quotas as a creation; 409 if it cannot be resumed.
+pub async fn resume(
+    State(s): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Option<RateInfo>, Json<Job>), Response> {
+    caller
+        .require(Scope::JobsCreate)
+        .map_err(IntoResponse::into_response)?;
+    let conflict = || (StatusCode::CONFLICT, Json(not_resumable())).into_response();
+    let job = s
+        .jobs
+        .get(&caller.owner, &id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    if !job.resumable {
+        return Err(conflict());
+    }
+    check_target(&job.url, &s.resolver)
+        .await
+        .map_err(|e| HttpError(e).into_response())?;
+    // Same rule as a create: the cap check and the requeue must not interleave.
+    let _admission = admission(&s, &caller).await;
+    let rate = check_create(&s, &caller).await?;
+    match s.jobs.resume(&caller.owner, &id).await {
+        Ok(Some(job)) => Ok((StatusCode::ACCEPTED, rate, Json(job))),
+        Ok(None) => Err(conflict()),
+        Err(e) => Err(e.into_response()),
+    }
 }
 
 pub async fn delete_job(

@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { ApiFailure } from "../src/api/client";
-import { POLL_RETRY, expandPlaylists, pollJob } from "../src/state";
-import type { Job, ProbeResponse } from "../src/api/types.gen";
+import { POLL_RETRY, defaultFormat, entryCard, h264First, pollJob, sortedFormats } from "../src/state";
+import type { Job } from "../src/api/types.gen";
 
 const job = (state: Job["state"]): Job => ({
   id: "j1", url: "https://x", format: "mp4", format_id: null, title: null, thumbnail: null,
   state, filename: null, size: null, error: null, progress: null, speed: null, eta: null,
-  created_at: "2026-01-01T00:00:00Z", expires_at: null,
+  created_at: "2026-01-01T00:00:00Z", expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null,
 });
 
 /** A virtual clock: `sleep` advances it at once and records each wait. */
@@ -23,12 +23,23 @@ function clock() {
   };
 }
 
-test("expandPlaylists replaces a playlist by its entries", async () => {
-  const probe = async (u: string): Promise<ProbeResponse> =>
-    u.includes("list=")
-      ? { kind: "playlist", title: "p", entries: ["https://1", "https://2"] }
-      : { kind: "video", title: "v", thumbnail: "", duration: 1, uploader: "", formats: [] };
-  expect(await expandPlaylists(["https://x?list=1", "https://y"], probe)).toEqual(["https://1", "https://2", "https://y"]);
+test("entryCard: a post item is ready at once, other entries are probed", () => {
+  expect(entryCard({ url: "https://x.com/a/status/1", title: null, playlist_item: 2 }, "k")).toEqual({
+    key: "k", url: "https://x.com/a/status/1", status: "ready", playlistItem: 2, title: "Video 2",
+  });
+  expect(entryCard({ url: "https://y/1", title: "One", playlist_item: null }, "k")).toEqual({
+    key: "k", url: "https://y/1", status: "loading", title: "One",
+  });
+});
+
+test("defaultFormat picks the tallest H.264 quality, sortedFormats goes tallest first", () => {
+  const f = (id: string, height: number, codec: string | null = null) => ({ id, label: `${height}p`, height, codec });
+  const formats = [f("a", 720), f("b", 2160, "VP9"), f("c", 1080), f("d", 1440, "VP9")];
+  expect(defaultFormat(formats)).toBe("c");
+  expect(defaultFormat([f("x", 2160, "VP9"), f("y", 1440, "AV1")])).toBe("x");
+  expect(defaultFormat([])).toBeUndefined();
+  expect(sortedFormats(formats).map((x) => x.id)).toEqual(["b", "d", "c", "a"]);
+  expect(h264First(formats).map((x) => x.id)).toEqual(["c", "a", "b", "d"]);
 });
 
 test("pollJob retries network failures with backoff, then goes on", async () => {

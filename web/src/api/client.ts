@@ -1,4 +1,14 @@
-import type { CreateJobRequest, ErrorCode, Job, ProbeResponse, PublicConfig } from "./types.gen";
+import type {
+  CreateJobRequest,
+  ErrorCode,
+  HistoryClean,
+  HistoryCleanResult,
+  HistoryEntry,
+  HistoryList,
+  Job,
+  ProbeResponse,
+  PublicConfig,
+} from "./types.gen";
 
 export class ApiFailure extends Error {
   constructor(
@@ -23,7 +33,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * A first-time visitor gets its `reclip_client` cookie from the first API
+ * response. Concurrent first requests would each mint a different cookie, and
+ * the last one to land would orphan jobs created under another. So every
+ * request waits for one bootstrap request (`getConfig` at startup) first.
+ */
+let bootstrap: Promise<unknown> = Promise.resolve();
+
+/** Run `first` alone, then let every other request through. */
+export function startBootstrap<T>(first: () => Promise<T>): Promise<T> {
+  const pending = first();
+  bootstrap = pending.catch(() => {});
+  return pending;
+}
+
 async function send(path: string, init?: RequestInit): Promise<Response> {
+  await bootstrap;
+  return sendNow(path, init);
+}
+
+async function sendNow(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { credentials: "same-origin", ...init });
   if (!res.ok) {
     let code: ErrorCode = "internal";
@@ -61,3 +91,14 @@ export const deleteJob = async (id: string): Promise<void> => {
   await send(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
 };
 export const eventsUrl = (id: string): string => `/api/v1/jobs/${encodeURIComponent(id)}/events`;
+export const resumeJob = (id: string): Promise<Job> =>
+  postJson(`/api/v1/jobs/${encodeURIComponent(id)}/resume`, {});
+
+export const listHistory = async (): Promise<HistoryEntry[]> =>
+  (await request<HistoryList>("/api/v1/history")).entries;
+export const removeHistory = async (id: string): Promise<void> => {
+  await send(`/api/v1/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+};
+export const cleanHistory = (req: HistoryClean): Promise<HistoryCleanResult> =>
+  postJson("/api/v1/history/clean", req);
+export const historyThumbUrl = (id: string): string => `/api/v1/history/${encodeURIComponent(id)}/thumb`;

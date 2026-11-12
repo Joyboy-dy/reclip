@@ -23,7 +23,14 @@ async fn security_headers_on_all_routes() {
                 .to_str()
                 .unwrap()
         };
-        assert_eq!(get("content-security-policy"), CSP, "{path}");
+        if path == "/" {
+            // HTML pages carry their own CSP with a per-response nonce.
+            let csp = get("content-security-policy");
+            assert!(csp.contains("style-src 'self' 'nonce-"), "{csp}");
+            assert!(!csp.contains("unsafe-inline"));
+        } else {
+            assert_eq!(get("content-security-policy"), CSP, "{path}");
+        }
         assert_eq!(get("x-content-type-options"), "nosniff", "{path}");
         assert_eq!(get("referrer-policy"), "no-referrer", "{path}");
         assert_eq!(

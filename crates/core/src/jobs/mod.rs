@@ -2,16 +2,21 @@
 //!
 //! Scheduling state (queue, running slots, per-site counters) sits behind a
 //! `std::sync::Mutex` that is never held across an `.await`. Scheduling runs
-//! on create, when a worker finishes and when a queued job is cancelled.
+//! on create and resume, when a worker finishes, when a queued job is
+//! cancelled or a job deleted, after a cleanup sweep and after disk evictions
+//! (see `disk.rs`).
 //! Running downloads are only ever stopped through their `CancellationToken`,
 //! and callers that need the worker gone await its `finished` token: dropping
 //! a download future would orphan yt-dlp's children.
 
 pub mod cleanup;
+mod delete;
+mod disk;
 pub mod hub;
 pub mod progress_tracker;
 pub mod queue;
 pub mod recovery;
+mod resume;
 mod sched;
 #[cfg(test)]
 mod tests;
@@ -27,6 +32,7 @@ use sched::{Sched, Tracked};
 
 pub use hub::Hub;
 pub use queue::{Queue, site_of};
+pub use resume::not_resumable;
 pub use sched::JobCounts;
 
 use crate::config::Config;
@@ -69,6 +75,7 @@ struct Inner {
     store: Store,
     hub: Hub,
     sched: Mutex<Sched>,
+    disk: disk::Disk,
     /// Cancelled by `shutdown`, for background loops.
     shutdown: CancellationToken,
 }
@@ -83,6 +90,7 @@ impl JobManager {
     pub fn new(cfg: Arc<Config>, store: Store) -> JobManager {
         let inner = Inner {
             sched: Mutex::new(Sched::new(&cfg)),
+            disk: disk::Disk::default(),
             cfg,
             store,
             hub: Hub::new(),
@@ -133,6 +141,10 @@ impl JobManager {
             eta: None,
             created_at: crate::store::now(),
             expires_at: None,
+            clip: req.clip,
+            strip_metadata: req.strip_metadata,
+            resumable: false,
+            playlist_item: req.playlist_item,
         };
         self.store()
             .insert(&job, owner, quota_key)
@@ -212,6 +224,11 @@ impl JobManager {
                     .map_err(internal)?;
                 let job = Job {
                     state: JobState::Cancelled,
+                    resumable: crate::store::is_resumable(
+                        JobState::Cancelled,
+                        None,
+                        Some(&expires_at),
+                    ),
                     expires_at: Some(expires_at),
                     ..stored
                 };
@@ -231,27 +248,5 @@ impl JobManager {
                 None => self.owned(owner, id).await,
             },
         }
-    }
-
-    /// Cancel if needed, wait for the worker, then remove the files and row.
-    pub async fn delete(&self, owner: &str, id: &str) -> Result<(), ManagerError> {
-        // Ownership first: `id` comes from the request and names a directory.
-        self.owned(owner, id).await?;
-        match self.detach(id) {
-            Tracked::Dequeued => self.schedule(),
-            Tracked::Running { cancel, finished } => {
-                cancel.cancel();
-                finished.cancelled().await;
-            }
-            Tracked::Untracked => {}
-        }
-        let dir = self.config().downloads_dir.join(id);
-        match tokio::fs::remove_dir_all(&dir).await {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(internal(e).into()),
-            _ => {}
-        }
-        self.store().delete(id).await.map_err(internal)?;
-        self.hub().forget(id);
-        Ok(())
     }
 }

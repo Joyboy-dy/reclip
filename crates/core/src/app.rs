@@ -4,9 +4,9 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::routing::{any, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::{Router, middleware};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::access::caller::caller_layer;
 use crate::access::key_usage::KeyUsage;
@@ -52,8 +52,9 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    let index = state.cfg.web_dir.join("index.html");
-    let web = ServeDir::new(&state.cfg.web_dir).fallback(ServeFile::new(index));
+    // Static files from the web dir; any other path gets the SPA page.
+    let spa = get(http::pages::index).with_state(state.clone());
+    let web = ServeDir::new(&state.cfg.web_dir).fallback(spa);
     let api = Router::new()
         .route("/api/v1/config", get(http::config::get_config))
         .route("/api/v1/probe", post(http::probe::probe))
@@ -69,13 +70,25 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/cancel", post(http::jobs::cancel))
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
         .route("/api/v1/jobs/{id}/link", post(http::links::create))
+        .route("/api/v1/jobs/{id}/resume", post(http::jobs::resume))
+        .route("/api/v1/history", get(http::history::list))
+        .route("/api/v1/history/clean", post(http::history::clean))
+        .route("/api/v1/history/{id}", delete(http::history::remove))
+        .route("/api/v1/history/{id}/thumb", get(http::history::thumb))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
     // Admin routes carry their own token check, outside `caller_layer`.
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/d/{token}", get(http::links::redeem))
+        .route("/", get(http::pages::index))
+        .route("/index.html", get(http::pages::index))
+        .route("/admin.html", get(http::pages::admin))
+        .route("/admin", get(http::pages::admin))
+        .route("/admin/", get(http::pages::admin))
+        .route("/admin/{*rest}", get(http::pages::admin))
         .merge(http::admin::routes(state.clone()))
+        .merge(http::admin_session::routes())
         .merge(api)
         .fallback_service(web)
         .with_state(state);

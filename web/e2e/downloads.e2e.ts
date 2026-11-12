@@ -1,80 +1,45 @@
-import { type Page, expect, test as base } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { apiJobs, cards, expect, fetchUrl, test } from "./fixtures";
 
-// Every spec listens (before navigation) for CSP violations, which browsers
-// report as console errors or page errors, and fails on any of them.
-const test = base.extend<{ cspGuard: void }>({
-  cspGuard: [
-    async ({ page }, use) => {
-      const seen: string[] = [];
-      const note = (text: string) => {
-        if (text.includes("Content Security Policy")) seen.push(text);
-      };
-      page.on("console", (m) => note(m.text()));
-      page.on("pageerror", (e) => note(e.message));
-      await use();
-      expect(seen, "CSP violations").toEqual([]);
-    },
-    { auto: true },
-  ],
-});
-
-type ApiJob = { id: string; state: string; progress: number | null };
-const TERMINAL = ["done", "failed", "cancelled", "expired"];
-// Mutating API calls need a same-origin Origin header (CSRF guard); page.request sends none.
-const ORIGIN = "http://127.0.0.1:18999";
-
-const apiJobs = async (page: Page): Promise<ApiJob[]> =>
-  ((await (await page.request.get("/api/v1/jobs")).json()) as { jobs: ApiJob[] }).jobs;
-
-// RECLIP_MAX_CONCURRENT=1: whatever a spec did, free the only download slot
-// (through the API, with the context's cookie) before the next spec starts.
-test.afterEach(async ({ page }) => {
-  for (const job of await apiJobs(page)) {
-    if (!TERMINAL.includes(job.state)) await page.request.post(`/api/v1/jobs/${job.id}/cancel`, { data: {}, headers: { Origin: ORIGIN } });
-  }
-  await expect
-    .poll(async () => (await apiJobs(page)).every((j) => TERMINAL.includes(j.state)))
-    .toBe(true);
-});
-
-const barWidth = (page: Page) =>
-  page.locator("#cards .card .pbar-fill").first().evaluate((el) => parseFloat((el as HTMLElement).style.width) || 0);
-
-// Public IP literals: the SSRF guard accepts them without DNS, and the fake
-// yt-dlp picks its behaviour from the "ok" / "slow" path.
-async function fetchUrl(page: Page, url: string) {
-  await page.goto("/");
-  await page.locator("#urls").fill(url);
-  await page.locator("#goBtn").click();
-  const card = page.locator("#cards .card").first();
-  await expect(card.getByRole("button", { name: "Download", exact: true })).toBeVisible();
-  return card;
-}
+const fillWidth = (page: Page) =>
+  cards(page).first().locator("[data-progress-fill]").evaluate((el) => el.getBoundingClientRect().width);
 
 test("paste, fetch and download mp3", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "MP3" }).click();
+  await page.getByRole("radio", { name: "Audio" }).click();
+  await page.getByRole("radio", { name: "MP3" }).click();
   await page.locator("#urls").fill("https://93.184.216.34/ok");
-  await page.locator("#goBtn").click();
-  const card = page.locator("#cards .card").first();
+  await page.getByRole("button", { name: "Fetch" }).click();
+  const card = cards(page).first();
   await card.getByRole("button", { name: "Download", exact: true }).click();
-  await expect(card.getByRole("button", { name: "Save" })).toBeVisible();
-  await expect(card.locator(".card-status.done")).toContainText(".mp3");
+  await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
+  await expect(card).toContainText(".mp3");
+});
+
+test("clip, metadata and container are sent with the job", async ({ page }) => {
+  const card = await fetchUrl(page, "https://93.184.216.34/ok");
+  await page.getByRole("radio", { name: "MKV" }).click();
+  await page.getByRole("checkbox", { name: "Clip" }).click();
+  await page.getByLabel("from").fill("1:20");
+  await page.getByLabel("to", { exact: true }).fill("2:05");
+  await page.getByRole("checkbox", { name: "Remove metadata" }).click();
+  const create = page.waitForRequest((r) => r.url().endsWith("/api/v1/jobs") && r.method() === "POST");
+  await card.getByRole("button", { name: "Download", exact: true }).click();
+  expect((await create).postDataJSON()).toMatchObject({ format: "mkv", clip: { start: 80, end: 125 }, strip_metadata: true });
+  await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
+  await expect(card).toContainText("metadata removed", { ignoreCase: true });
 });
 
 test("progress survives a refresh", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await expect.poll(async () => (await apiJobs(page)).some((j) => (j.progress ?? 0) > 0)).toBe(true);
-  await expect.poll(() => barWidth(page)).toBeGreaterThan(0);
   // Computed width (what the user sees), not just the inline value.
-  await expect
-    .poll(() => page.locator("#cards .card .pbar-fill").first().evaluate((el) => el.getBoundingClientRect().width))
-    .toBeGreaterThan(0);
+  await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);
   await page.reload();
-  const restored = page.locator("#cards .card").first();
-  await expect(restored.locator(".pbar")).toBeVisible();
-  await expect.poll(() => barWidth(page)).toBeGreaterThan(0);
+  const restored = cards(page).first();
+  await expect(restored.getByRole("progressbar")).toBeVisible();
+  await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);
   await expect(restored.getByRole("button", { name: "Cancel" })).toBeVisible();
 });
 
@@ -82,16 +47,48 @@ test("cancel a running download", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
   await card.getByRole("button", { name: "Download", exact: true }).click();
   await card.getByRole("button", { name: "Cancel" }).click();
-  await expect(card).toContainText("Download cancelled");
+  await expect(card).toContainText(/cancel/i);
+  await expect(card.getByRole("button", { name: "Remove" })).toBeVisible();
 });
 
 test("remove a finished download", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/ok");
   await card.getByRole("button", { name: "Download", exact: true }).click();
-  await expect(card.getByRole("button", { name: "Save" })).toBeVisible();
+  await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
   await card.getByRole("button", { name: "Remove" }).click();
-  await expect(page.locator("#cards .card")).toHaveCount(0);
+  await expect(cards(page)).toHaveCount(0);
   await page.reload();
   await expect(page.locator("#urls")).toBeVisible();
-  await expect(page.locator("#cards .card")).toHaveCount(0);
+  await expect(cards(page)).toHaveCount(0);
+});
+
+test("clean up menu opens with its four actions", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Clean up" }).click();
+  const menu = page.getByRole("menu");
+  for (const item of ["Remove expired files from the list", "Remove older than 7 days", "Remove older than 14 days", "Clear all history"]) {
+    await expect(menu.getByRole("menuitem", { name: item })).toBeVisible();
+  }
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+});
+
+test("a finished download is listed in the history with Save, and can be removed", async ({ page }) => {
+  const card = await fetchUrl(page, "https://93.184.216.34/ok");
+  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
+  const row = page.locator("[data-history-row]").first();
+  await expect(row.getByRole("link", { name: "Save" })).toBeVisible();
+  await row.getByRole("button", { name: "Remove from history" }).click();
+  await expect(page.locator("[data-history-row]")).toHaveCount(0);
+});
+
+test("a cancelled download resumes", async ({ page }) => {
+  const card = await fetchUrl(page, "https://93.184.216.34/slow");
+  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);
+  await card.getByRole("button", { name: "Cancel" }).click();
+  await expect(card).toContainText("Resume keeps the part already downloaded");
+  await card.getByRole("button", { name: "Resume" }).click();
+  await expect(card.getByRole("button", { name: "Cancel" })).toBeVisible();
 });

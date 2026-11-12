@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use reclip_shared::MediaFormat;
 use tempfile::TempPath;
 
+use super::download_args::is_x_post;
 use crate::config::Config;
 
 /// Arguments shared by every yt-dlp call. The cookies copy lives as long as
@@ -65,7 +65,10 @@ pub fn session_args_with(
 }
 
 pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
-    if url.contains("list=") {
+    if is_x_post(url) {
+        // No --no-playlist: a multi-video post then prints one JSON per video.
+        ["-j", "--", url].map(String::from).to_vec()
+    } else if url.contains("list=") {
         ["--flat-playlist", "-J", "--playlist-end"]
             .map(String::from)
             .into_iter()
@@ -78,57 +81,7 @@ pub fn probe_args(url: &str, playlist_limit: u32) -> Vec<String> {
     }
 }
 
-/// One parsable line per progress update, read by `progress::parse_line`.
-const PROGRESS_TEMPLATE: &str = "download:[reclip] %(progress.downloaded_bytes)s \
-    %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s \
-    %(progress.eta)s";
-
-/// The `-f` selector of a download; `None` for mp3 (audio extraction).
-pub fn format_selector(format: MediaFormat, format_id: Option<&str>) -> Option<String> {
-    match (format, format_id) {
-        (MediaFormat::Mp3, _) => None,
-        (MediaFormat::Mp4, Some(id)) => Some(format!("{id}+bestaudio/best")),
-        (MediaFormat::Mp4, None) => Some("bestvideo+bestaudio/best".into()),
-    }
-}
-
-pub fn download_args(
-    out_template: &str,
-    format: MediaFormat,
-    format_id: Option<&str>,
-    max_filesize: &str,
-    max_duration: u64,
-    url: &str,
-) -> Vec<String> {
-    let mut a: Vec<String> = [
-        "--no-playlist",
-        "--newline",
-        "-o",
-        out_template,
-        "--progress-template",
-        PROGRESS_TEMPLATE,
-    ]
-    .map(String::from)
-    .to_vec();
-    match format_selector(format, format_id) {
-        None => a.extend(["-x", "--audio-format", "mp3"].map(String::from)),
-        Some(selector) => a.extend([
-            "-f".into(),
-            selector,
-            "--merge-output-format".into(),
-            "mp4".into(),
-        ]),
-    }
-    a.extend([
-        "--max-filesize".into(),
-        max_filesize.into(),
-        "--match-filter".into(),
-        format!("!is_live & duration <=? {max_duration}"),
-        "--".into(),
-        url.into(),
-    ]);
-    a
-}
+pub use super::download_args::{DownloadOptions, download_args, format_name, format_selector};
 
 #[cfg(test)]
 mod tests {
@@ -219,58 +172,6 @@ mod tests {
                 "--",
                 "https://youtube.com/watch?v=a&list=RDx"
             ]
-        );
-    }
-    #[test]
-    fn mp3_download_args() {
-        let a = download_args("/d/x.%(ext)s", MediaFormat::Mp3, None, "2G", 10800, "u");
-        assert!(a.windows(2).any(|w| w == ["--audio-format", "mp3"]) && a.contains(&"-x".into()));
-        assert_eq!(a[..4], ["--no-playlist", "--newline", "-o", "/d/x.%(ext)s"]);
-        assert_eq!(a.last().unwrap(), "u");
-    }
-    #[test]
-    fn mp4_with_format_id() {
-        let a = download_args(
-            "/d/x.%(ext)s",
-            MediaFormat::Mp4,
-            Some("137"),
-            "2G",
-            10800,
-            "u",
-        );
-        assert!(a.windows(2).any(|w| w == ["-f", "137+bestaudio/best"]));
-        assert!(a.windows(2).any(|w| w == ["--merge-output-format", "mp4"]));
-        assert!(a.windows(2).any(|w| w == ["--max-filesize", "2G"]));
-        assert!(
-            a.windows(2)
-                .any(|w| w == ["--match-filter", "!is_live & duration <=? 10800"])
-        );
-        let n = a.len();
-        assert_eq!(a[n - 2], "--");
-        assert_eq!(a[n - 1], "u");
-    }
-    #[test]
-    fn download_args_ask_for_parsable_progress() {
-        let a = download_args("o", MediaFormat::Mp4, None, "2G", 1, "u");
-        assert!(a.windows(2).any(|w| w
-            == [
-                "--progress-template",
-                "download:[reclip] %(progress.downloaded_bytes)s %(progress.total_bytes)s \
-                 %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s"
-            ]));
-    }
-    #[test]
-    fn download_args_reject_live_streams() {
-        let a = download_args("o", MediaFormat::Mp4, None, "2G", 10800, "u");
-        let i = a.iter().position(|x| x == "--match-filter").unwrap();
-        assert!(a[i + 1].contains("!is_live"));
-    }
-    #[test]
-    fn mp4_without_format_id() {
-        let a = download_args("o", MediaFormat::Mp4, None, "2G", 1, "u");
-        assert!(
-            a.windows(2)
-                .any(|w| w == ["-f", "bestvideo+bestaudio/best"])
         );
     }
 }

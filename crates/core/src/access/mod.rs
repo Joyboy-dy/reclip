@@ -1,5 +1,6 @@
 //! Access control: trusted proxies, client identity, API keys and limits.
 
+pub mod admin_auth;
 pub mod caller;
 pub mod cookie;
 pub mod ip;

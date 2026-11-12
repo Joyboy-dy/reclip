@@ -20,11 +20,26 @@ export default defineConfig({
   outputDir: "../test-results",
   expect: { timeout: 10_000 },
   use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Same layout as desktop (MainTablet mockup), narrower.
+    {
+      name: "tablet",
+      testMatch: "**/layout.e2e.ts",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 }, hasTouch: true },
+    },
+    // Dedicated phone layout (MainMobile mockup).
+    {
+      name: "mobile",
+      testMatch: "**/layout.e2e.ts",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
+    },
+  ],
   webServer: {
     command: path.join(targetDir, `reclip-core${exe}`),
     env: {
       RECLIP_YTDLP_BIN: path.join(targetDir, `fake-ytdlp${exe}`),
+      RECLIP_FFMPEG_BIN: path.join(targetDir, `fake-ffmpeg${exe}`),
       RECLIP_PORT: String(port),
       RECLIP_HOST: "127.0.0.1",
       RECLIP_DATA_DIR: dataDir,

@@ -156,7 +156,7 @@ async fn cancel_is_idempotent() {
 }
 
 #[tokio::test]
-async fn delete_removes_job_and_file() {
+async fn delete_removes_file_and_keeps_finished_job_as_expired() {
     let s = start().await;
     let id = s.create("https://ok.example/v").await;
     s.wait_job(&id, "done").await;
@@ -164,7 +164,14 @@ async fn delete_removes_job_and_file() {
     let r = s.delete(&format!("/api/v1/jobs/{id}")).await;
     assert_eq!(r.status(), 204);
     assert!(r.bytes().await.unwrap().is_empty());
-    assert_eq!(s.get(&format!("/api/v1/jobs/{id}")).await.status(), 404);
+    // A finished job stays in the history (see tests/history.rs).
+    let job: Value = s
+        .get(&format!("/api/v1/jobs/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(job["state"], "expired");
     assert!(!s.downloads.join(&id).exists());
 }
 

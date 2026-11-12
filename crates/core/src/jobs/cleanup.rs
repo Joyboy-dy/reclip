@@ -6,10 +6,9 @@ use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 
 use super::JobManager;
-use super::recovery::remove_dir;
+use super::recovery::{remove_dir, remove_file};
 
-/// `expired` rows are kept this long before being deleted.
-const PURGE_AFTER: Duration = Duration::from_secs(7 * 24 * 3600);
+const DAY: u64 = 24 * 3600;
 
 /// Run [`sweep`] every `cleanup_interval`. The first run is one interval
 /// after the call (recovery already ran at startup). Errors are logged and
@@ -38,8 +37,9 @@ pub fn spawn_cleanup(manager: JobManager) -> JoinHandle<()> {
 }
 
 /// Expire due `done`, `failed` and `cancelled` jobs (delete their
-/// directories, publish the `expired` job) and purge `expired` rows older
-/// than seven days.
+/// directories, publish the `expired` job), purge `expired` rows (and their
+/// thumbnails) older than `history_days`, then measure the disk use and
+/// start the queued jobs it now allows.
 pub async fn sweep(manager: &JobManager) -> anyhow::Result<()> {
     let store = manager.store();
     let root = &manager.config().downloads_dir;
@@ -51,10 +51,15 @@ pub async fn sweep(manager: &JobManager) -> anyhow::Result<()> {
             manager.hub().publish(job);
         }
     }
-    let before = crate::store::now_minus(PURGE_AFTER);
-    let purged = store.purge_expired(&before).await?;
-    if purged > 0 {
-        tracing::info!(purged, "purged expired jobs");
+    let keep = Duration::from_secs(u64::from(manager.config().history_days) * DAY);
+    let purged = store.purge_expired(&crate::store::now_minus(keep)).await?;
+    for thumb in purged.iter().flatten() {
+        remove_file(thumb).await;
     }
+    if !purged.is_empty() {
+        tracing::info!(purged = purged.len(), "purged expired jobs");
+    }
+    manager.refresh_disk().await;
+    manager.schedule();
     Ok(())
 }

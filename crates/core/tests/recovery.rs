@@ -41,6 +41,10 @@ fn job(id: &str, state: JobState, format_id: Option<&str>) -> Job {
         speed: None,
         eta: None,
         created_at: reclip_core::store::now(),
+        clip: None,
+        strip_metadata: false,
+        resumable: false,
+        playlist_item: None,
         expires_at: Some(reclip_core::store::now_plus(Duration::from_secs(3600))),
     }
 }
@@ -78,8 +82,10 @@ async fn recover_fails_running_and_requeues_queued() {
 
     let failed = store.get("run1").await.unwrap().unwrap();
     assert_eq!(failed.state, JobState::Failed);
-    assert_eq!(failed.error.unwrap().code, ErrorCode::Interrupted);
-    assert!(!dir.path().join("run1").exists());
+    assert_eq!(failed.error.as_ref().unwrap().code, ErrorCode::Interrupted);
+    assert!(failed.resumable);
+    // Kept for a resume.
+    assert!(dir.path().join("run1/partial.part").exists());
 
     wait_for("done", async || {
         store.get("queued1").await.unwrap().unwrap().state == JobState::Done
@@ -88,7 +94,8 @@ async fn recover_fails_running_and_requeues_queued() {
     let args = std::fs::read_to_string(dir.path().join("queued1.args.txt")).unwrap();
     let args: Vec<&str> = args.lines().collect();
     assert!(
-        args.windows(2).any(|w| w == ["-f", "137+bestaudio/best"]),
+        args.windows(2)
+            .any(|w| w == ["-f", "137+bestaudio[ext=m4a]/137+bestaudio/137/best"]),
         "{args:?}"
     );
     mgr.shutdown().await;
@@ -108,6 +115,13 @@ async fn recover_removes_orphan_dirs() {
         .await
         .unwrap();
     make_dir(dir.path(), done);
+    // A cancelled download keeps its partial files for a resume.
+    let cancelled = "0190f5c2a1b47c3d8e9f00112233aa05";
+    store
+        .insert(&job(cancelled, JobState::Cancelled, None), OWNER, "")
+        .await
+        .unwrap();
+    make_dir(dir.path(), cancelled);
     for orphan in orphans {
         make_dir(dir.path(), orphan);
     }
@@ -120,6 +134,7 @@ async fn recover_removes_orphan_dirs() {
     let report = recovery::recover(&mgr).await.unwrap();
     assert_eq!(report.orphan_dirs, 2);
     assert!(dir.path().join(done).join("partial.part").exists());
+    assert!(dir.path().join(cancelled).join("partial.part").exists());
     for orphan in orphans {
         assert!(!dir.path().join(orphan).exists());
     }
@@ -174,6 +189,9 @@ async fn failed_and_cancelled_jobs_expire_then_purge() {
         format: MediaFormat::Mp4,
         format_id: None,
         title: None,
+        clip: None,
+        strip_metadata: false,
+        playlist_item: None,
         thumbnail: None,
     };
     let failed = mgr
@@ -211,7 +229,7 @@ async fn failed_and_cancelled_jobs_expire_then_purge() {
     })
     .await;
     let later = reclip_core::store::now_plus(Duration::from_secs(60));
-    assert_eq!(store.purge_expired(&later).await.unwrap(), 2);
+    assert_eq!(store.purge_expired(&later).await.unwrap().len(), 2);
     assert_eq!(store.get(&failed).await.unwrap(), None);
     assert_eq!(store.get(&cancelled).await.unwrap(), None);
     mgr.shutdown().await;

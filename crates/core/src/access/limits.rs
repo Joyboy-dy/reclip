@@ -24,6 +24,8 @@ pub enum Bucket {
     Probe,
     /// Creating a job (3600 s window).
     Create,
+    /// Failed admin sign-ins (15 min window).
+    AdminFail,
 }
 
 impl Bucket {
@@ -31,6 +33,7 @@ impl Bucket {
         match self {
             Bucket::Probe => Duration::from_secs(60),
             Bucket::Create => Duration::from_secs(3600),
+            Bucket::AdminFail => Duration::from_secs(900),
         }
     }
 }
@@ -114,6 +117,14 @@ impl Limiter {
         limit: u32,
     ) -> Result<Option<RateInfo>, Limited> {
         self.check_at(bucket, key, limit, Instant::now())
+    }
+
+    /// Give back one slot taken by `check` (an attempt that succeeded).
+    pub fn release(&self, bucket: Bucket, key: &str) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(w) = inner.windows.get_mut(&(bucket, key.to_string())) {
+            w.count = w.count.saturating_sub(1);
+        }
     }
 
     pub fn check_at(

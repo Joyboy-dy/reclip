@@ -1,7 +1,9 @@
 //! Runs one job: `downloading` with live progress, `processing`, then `done`
-//! or `failed`/`cancelled` (directory removed), each with an expiry.
+//! (thumbnail kept) or `failed`/`cancelled`, each with an expiry. A stopped
+//! download that can be resumed keeps its partial files; other failures
+//! remove the job directory.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use reclip_shared::{ApiError, ErrorCode, Job, JobState};
 use tokio::sync::mpsc;
@@ -9,9 +11,15 @@ use tokio_util::sync::CancellationToken;
 
 use super::progress_tracker::ProgressTracker;
 use super::{JobManager, internal};
+use crate::config::Config;
+use crate::store::is_resumable;
+use crate::ytdlp::args::DownloadOptions;
 use crate::ytdlp::parse::safe_filename;
 use crate::ytdlp::progress::ProgressEvent;
 use crate::ytdlp::runner;
+
+/// The thumbnail yt-dlp writes next to the media.
+const THUMB: &str = "thumb.jpg";
 
 /// Releases the worker's slot on every exit path, panics included.
 ///
@@ -91,6 +99,8 @@ pub(super) async fn run(mgr: JobManager, job: Job, cancel: CancellationToken) {
         download(&mgr, &job, &dir, &cancel).await
     };
     finish(&mgr, job, &dir, outcome).await;
+    // Before the slot is freed: the next `schedule` sees this job's files.
+    mgr.refresh_disk().await;
     release.recorded = true;
 }
 
@@ -123,11 +133,17 @@ async fn download(
 
     let mut tracker = ProgressTracker::for_download(job.format, job.format_id.as_deref());
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let download = runner::download(
+    let opts = DownloadOptions {
+        format: job.format,
+        format_id: job.format_id.clone(),
+        clip: job.clip,
+        strip_metadata: job.strip_metadata,
+        playlist_item: job.playlist_item,
+    };
+    let download = runner::download_with(
         mgr.config(),
         dir,
-        job.format,
-        job.format_id.as_deref(),
+        &opts,
         &job.url,
         move |event| {
             let _ = tx.send(event);
@@ -155,6 +171,7 @@ async fn download(
         .set_file_path(&job.id, &path)
         .await
         .map_err(internal)?;
+    keep_thumb(mgr, &job.id, dir).await;
     Ok((filename, size))
 }
 
@@ -194,12 +211,15 @@ async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String,
             done.size = Some(size);
         }
         Err(err) => {
-            remove_dir(&done.id, dir).await;
             let (state, error) = match err.code {
                 ErrorCode::Cancelled if mgr.stopping() => (JobState::Failed, Some(interrupted())),
                 ErrorCode::Cancelled => (JobState::Cancelled, None),
                 _ => (JobState::Failed, Some(err)),
             };
+            // A resumable job keeps its partial files until it expires.
+            if !is_resumable(state, error.as_ref(), None) {
+                remove_dir(&done.id, dir).await;
+            }
             done.state = state;
             done.error = error;
         }
@@ -215,9 +235,44 @@ async fn finish(mgr: &JobManager, job: Job, dir: &Path, outcome: Result<(String,
         .await;
     match written {
         Ok(expires_at) => done.expires_at = Some(expires_at),
+        // A job deleted while it ran has no row left: nothing to record.
+        Err(e) if matches!(mgr.store().owner_of(&done.id).await, Ok(None)) => {
+            tracing::debug!(job = %done.id, error = %e, "job deleted, result not recorded");
+        }
         Err(e) => tracing::error!(job = %done.id, error = %e, "cannot record job result"),
     }
+    done.resumable = is_resumable(done.state, done.error.as_ref(), done.expires_at.as_deref());
     mgr.hub().publish(done);
+}
+
+/// Where a job's thumbnail is kept: `<data_dir>/thumbs/<id>.jpg`.
+pub(super) fn thumb_file(cfg: &Config, id: &str) -> PathBuf {
+    cfg.data_dir.join("thumbs").join(format!("{id}.jpg"))
+}
+
+/// Move yt-dlp's `thumb.jpg` to `<data_dir>/thumbs/<id>.jpg` and record it.
+/// A missing or unmovable thumbnail is not an error.
+async fn keep_thumb(mgr: &JobManager, id: &str, dir: &Path) {
+    let from = dir.join(THUMB);
+    if !tokio::fs::try_exists(&from).await.unwrap_or(false) {
+        return;
+    }
+    let to = thumb_file(mgr.config(), id);
+    let moved = async {
+        if let Some(thumbs) = to.parent() {
+            tokio::fs::create_dir_all(thumbs).await?;
+        }
+        // `rename` fails across file systems: copy then remove instead.
+        if tokio::fs::rename(&from, &to).await.is_err() {
+            tokio::fs::copy(&from, &to).await?;
+            tokio::fs::remove_file(&from).await?;
+        }
+        mgr.store().set_thumb_path(id, &to).await?;
+        anyhow::Ok(())
+    };
+    if let Err(e) = moved.await {
+        tracing::warn!(job = %id, error = %e, "cannot keep thumbnail");
+    }
 }
 
 fn interrupted() -> ApiError {
