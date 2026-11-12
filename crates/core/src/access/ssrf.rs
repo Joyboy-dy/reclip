@@ -7,35 +7,16 @@
 //! yt-dlp, so DNS rebinding is likewise left to network isolation.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::future::BoxFuture;
 use reclip_shared::{ApiError, ErrorCode};
 use url::{Host, Url};
 
+pub use super::resolver::{Resolver, static_resolver, system_resolver};
 use crate::http::api_error;
 
+/// Covers waiting for a lookup slot as well as the lookup itself.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Turns `(host, port)` into addresses. Injectable so tests stay offline.
-pub type Resolver =
-    Arc<dyn Fn(String, u16) -> BoxFuture<'static, std::io::Result<Vec<IpAddr>>> + Send + Sync>;
-
-/// The real resolver (`tokio::net::lookup_host`).
-pub fn system_resolver() -> Resolver {
-    Arc::new(|host, port| {
-        Box::pin(async move {
-            let addrs = tokio::net::lookup_host((host, port)).await?;
-            Ok(addrs.map(|a| a.ip()).collect())
-        })
-    })
-}
-
-/// A resolver that answers `ip` for every name.
-pub fn static_resolver(ip: IpAddr) -> Resolver {
-    Arc::new(move |_, _| Box::pin(async move { Ok(vec![ip]) }))
-}
 
 fn forbidden_v4(ip: Ipv4Addr) -> bool {
     let [a, b, c, _] = ip.octets();
@@ -121,6 +102,7 @@ pub async fn check_target(url: &str, resolver: &Resolver) -> Result<(), ApiError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
