@@ -29,10 +29,21 @@ async function send(path: string, method: string, body?: unknown): Promise<Respo
     } catch {
       // non-JSON error body: keep defaults
     }
-    throw new ApiFailure(code, message, res.status);
+    throw new ApiFailure(code, message, res.status, parseRetryAfter(res.headers.get("Retry-After")));
   }
   return res;
 }
+
+/** Integer seconds only; an HTTP-date or garbage means "unknown". */
+export function parseRetryAfter(value: string | null): number | undefined {
+  const text = value?.trim();
+  return text && /^\d+$/.test(text) ? Number(text) : undefined;
+}
+
+export const SESSION_EXPIRED = "Your session expired. Sign in again.";
+
+/** True when the session is missing or expired (any 401 except a failed sign-in, which callers handle themselves). */
+export const isUnauthorized = (err: unknown): boolean => err instanceof ApiFailure && err.status === 401;
 
 async function json<T>(path: string, method: string, body?: unknown): Promise<T> {
   return (await send(path, method, body)).json() as Promise<T>;
@@ -49,10 +60,14 @@ export const revokeKey = async (id: string): Promise<void> =>
   void (await send(`/keys/${encodeURIComponent(id)}`, "DELETE"));
 
 /** Message to show for a failed admin call. Wrong credentials and network failures get fixed copy. */
-export function adminErrorText(err: unknown, unauthorized = "Wrong email or password."): string {
+export function adminErrorText(err: unknown, unauthorized = SESSION_EXPIRED): string {
   if (err instanceof ApiFailure) {
     if (err.status === 401 || err.code === "unauthorized") return unauthorized;
-    if (err.status === 429 || err.code === "rate_limited") return "Too many attempts. Wait a moment and try again.";
+    if (err.status === 429 || err.code === "rate_limited") {
+      return err.retryAfter === undefined
+        ? "Too many attempts. Try again in a moment."
+        : `Too many attempts. Try again in ${err.retryAfter} s.`;
+    }
     if (err.status === 501) return "This feature is not available on the server yet.";
     return err.message;
   }

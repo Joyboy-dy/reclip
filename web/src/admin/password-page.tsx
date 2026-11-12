@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { adminErrorText, changePassword } from "./api";
+import { adminErrorText, changePassword, isUnauthorized } from "./api";
 import { validateNewPassword } from "./lib";
 import { CheckRow, ErrorLine, Field, PageTitle, Panel, StrengthMeter, TextInput } from "./parts";
 
-export function PasswordPage() {
+export function PasswordPage({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -27,7 +27,8 @@ export function PasswordPage() {
       setConfirm("");
       setSaved(true);
     } catch (err) {
-      setError(adminErrorText(err, "The current password is not correct."));
+      if (isUnauthorized(err)) return onUnauthorized();
+      setError(adminErrorText(err));
     } finally {
       setBusy(false);
     }

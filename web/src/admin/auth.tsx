@@ -1,16 +1,22 @@
 import { useState, type FormEvent } from "react";
 import type { AdminMe } from "@/api/types.gen";
 import { Button } from "@/components/ui/button";
-import { adminErrorText, changePassword, login } from "./api";
+import { adminErrorText, changePassword, isUnauthorized, login } from "./api";
 import { validateNewPassword } from "./lib";
 import { CenteredPage, ErrorLine, Field, Panel, StrengthMeter, TextInput } from "./parts";
 
 const SUBMIT = "h-12 w-full text-[13px] tracking-[0.05em] min-[561px]:h-auto";
 
-export function LoginPage({ onSignedIn }: { onSignedIn: (me: AdminMe, password: string) => void }) {
+export function LoginPage({
+  notice,
+  onSignedIn,
+}: {
+  notice?: string;
+  onSignedIn: (me: AdminMe, password: string) => void;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(notice ?? null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: FormEvent) {
@@ -20,7 +26,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (me: AdminMe, password: 
     try {
       onSignedIn(await login({ email: email.trim(), password }), password);
     } catch (err) {
-      setError(adminErrorText(err));
+      setError(adminErrorText(err, "Wrong email or password."));
       setBusy(false);
     }
   }
@@ -54,7 +60,17 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (me: AdminMe, password: 
   );
 }
 
-export function FirstLoginPage({ me, initialPassword, onDone }: { me: AdminMe; initialPassword: string; onDone: () => void }) {
+export function FirstLoginPage({
+  me,
+  initialPassword,
+  onDone,
+  onUnauthorized,
+}: {
+  me: AdminMe;
+  initialPassword: string;
+  onDone: () => void;
+  onUnauthorized: () => void;
+}) {
   // After a page reload the sign-in password is gone, so ask for the default one again.
   const [current, setCurrent] = useState(initialPassword);
   const [next, setNext] = useState("");
@@ -72,7 +88,8 @@ export function FirstLoginPage({ me, initialPassword, onDone }: { me: AdminMe; i
       await changePassword({ current, new: next, sign_out_others: true });
       onDone();
     } catch (err) {
-      setError(adminErrorText(err, "Your session ended. Sign in again."));
+      if (isUnauthorized(err)) return onUnauthorized();
+      setError(adminErrorText(err));
       setBusy(false);
     }
   }

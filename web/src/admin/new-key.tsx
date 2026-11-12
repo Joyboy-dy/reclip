@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { adminErrorText, createKey } from "./api";
+import { adminErrorText, createKey, isUnauthorized } from "./api";
 import type { Layout } from "./breakpoint";
 import { DEFAULT_NEW_KEY, EXPIRY_CHOICES, SCOPE_CHOICES, buildCreateRequest, type NewKeyForm } from "./lib";
 import { Modal, ModalDescription, ModalHeader, ModalTitle } from "./modal";
@@ -139,9 +139,11 @@ export function NewKeyDialog({
   open,
   onClose,
   onCreated,
+  onUnauthorized,
 }: {
   layout: Layout;
   open: boolean;
+  onUnauthorized: () => void;
   onClose: () => void;
   onCreated: (created: CreatedKey) => void;
 }) {
@@ -162,6 +164,7 @@ export function NewKeyDialog({
       setForm(DEFAULT_NEW_KEY);
       onCreated(created);
     } catch (err) {
+      if (isUnauthorized(err)) return onUnauthorized();
       setError(adminErrorText(err));
     } finally {
       setBusy(false);

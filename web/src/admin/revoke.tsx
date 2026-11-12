@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { ApiKeyInfo } from "@/api/types.gen";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { adminErrorText, revokeKey } from "./api";
+import { adminErrorText, isUnauthorized, revokeKey } from "./api";
 import type { Layout } from "./breakpoint";
 import { keyPrefix } from "./lib";
 import { ErrorLine } from "./parts";
@@ -13,7 +13,9 @@ export function RevokeDialog({
   target,
   onClose,
   onRevoked,
+  onUnauthorized,
 }: {
+  onUnauthorized: () => void;
   layout: Layout;
   target: ApiKeyInfo | null;
   onClose: () => void;
@@ -31,6 +33,7 @@ export function RevokeDialog({
       await revokeKey(target.id);
       onRevoked();
     } catch (err) {
+      if (isUnauthorized(err)) return onUnauthorized();
       setError(adminErrorText(err));
     } finally {
       setBusy(false);

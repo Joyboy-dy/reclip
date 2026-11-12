@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Layout } from "./breakpoint";
-import { expiryInfo, keyPrefix, keyStatus, limitsLabel, relativeTime, rightsLabel, type KeyStatus } from "./lib";
+import { capitalize, expiryInfo, keyPrefix, keyStatus, limitsLabel, relativeTime, rightsLabel, type KeyStatus } from "./lib";
 
 type Props = { keys: ApiKeyInfo[]; now: Date; onRevoke: (key: ApiKeyInfo) => void };
 
@@ -114,12 +114,12 @@ function KeyCard({ k, now, tablet, onRevoke }: { k: ApiKeyInfo; now: Date; table
   const facts: [string, string][] = revoked
     ? [
         ["Rights", rightsLabel(k.scopes, true)],
-        ["Last used", capitalise(relativeTime(k.last_used_at, now))],
+        ["Last used", capitalize(relativeTime(k.last_used_at, now))],
       ]
     : [
         ["Rights", rightsLabel(k.scopes, true)],
         ["Limits", limitsLabel(k, true)],
-        ["Last used", capitalise(relativeTime(k.last_used_at, now))],
+        ["Last used", capitalize(relativeTime(k.last_used_at, now))],
         ["Uses", k.request_count.toLocaleString("en-US")],
       ];
   const expiryText = info
@@ -177,7 +177,6 @@ function KeyCard({ k, now, tablet, onRevoke }: { k: ApiKeyInfo; now: Date; table
   );
 }
 
-const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Tablet: two-column grid. Phone: single column. */
 export function KeyCards({ keys, now, onRevoke, layout }: Props & { layout: Layout }) {

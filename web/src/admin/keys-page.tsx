@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiFailure } from "@/api/client";
 import type { ApiKeyInfo, CreatedKey } from "@/api/types.gen";
-import { adminErrorText, listKeys } from "./api";
+import { adminErrorText, isUnauthorized, listKeys } from "./api";
 import type { Layout } from "./breakpoint";
 import { KeyCreatedDialog } from "./key-created";
 import { KeyCards, KeysTable } from "./key-views";
@@ -23,7 +22,7 @@ export function KeysPage({ layout, onUnauthorized }: { layout: Layout; onUnautho
       setKeys(await listKeys());
       setError(null);
     } catch (err) {
-      if (err instanceof ApiFailure && err.status === 401) return onUnauthorized();
+      if (isUnauthorized(err)) return onUnauthorized();
       setError(adminErrorText(err));
     }
   }, [onUnauthorized]);
@@ -60,6 +59,7 @@ export function KeysPage({ layout, onUnauthorized }: { layout: Layout; onUnautho
       <NewKeyDialog
         layout={layout}
         open={creating}
+        onUnauthorized={onUnauthorized}
         onClose={() => setCreating(false)}
         onCreated={(c) => {
           setCreating(false);
@@ -71,6 +71,7 @@ export function KeysPage({ layout, onUnauthorized }: { layout: Layout; onUnautho
       <RevokeDialog
         layout={layout}
         target={revoking}
+        onUnauthorized={onUnauthorized}
         onClose={() => setRevoking(null)}
         onRevoked={() => {
           setRevoking(null);

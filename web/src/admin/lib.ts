@@ -41,7 +41,7 @@ const FRIENDLY: Record<string, string> = {
   "jobs:read": "read jobs",
   "jobs:cancel": "cancel jobs",
 };
-const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+export const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Short rights summary. Table uses raw scope names; cards (`friendly`) use readable ones, capitalised. */
 export function rightsLabel(scopes: Scope[], friendly = false): string {

@@ -4,7 +4,7 @@ import { ApiFailure } from "@/api/client";
 import type { AdminMe } from "@/api/types.gen";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initNonce } from "@/lib/nonce";
-import { getMe, logout } from "./api";
+import { SESSION_EXPIRED, getMe, logout } from "./api";
 import { FirstLoginPage, LoginPage } from "./auth";
 import { useLayout } from "./breakpoint";
 import { KeysPage } from "./keys-page";
@@ -15,7 +15,7 @@ import { Shell } from "./shell";
 // Must run before the first render so Radix style tags carry the CSP nonce.
 initNonce();
 
-type Session = { status: "loading" } | { status: "anonymous" } | { status: "in"; me: AdminMe; signInPassword: string };
+type Session = { status: "loading" } | { status: "anonymous"; notice?: string } | { status: "in"; me: AdminMe; signInPassword: string };
 
 function App() {
   const layout = useLayout();
@@ -33,15 +33,23 @@ function App() {
     );
   }, []);
 
-  const signedOut = useCallback(() => setSession({ status: "anonymous" }), []);
+  // Any 401 from an admin call means the session is gone: back to sign-in with a notice.
+  const expired = useCallback(() => setSession({ status: "anonymous", notice: SESSION_EXPIRED }), []);
+
+  // "/admin" is only an entry point: signed-in users land on the key list.
+  const signedIn = session.status === "in" && !session.me.must_change_password;
+  useEffect(() => {
+    if (signedIn && route === "home") replace("keys");
+  }, [signedIn, route, replace]);
 
   async function signOut() {
     try {
       await logout();
-    } finally {
-      signedOut();
-      replace("home");
+    } catch (err) {
+      console.error(err); // still sign out locally; the cookie expires on its own
     }
+    setSession({ status: "anonymous" });
+    replace("home");
   }
 
   if (session.status === "loading") return null;
@@ -49,8 +57,10 @@ function App() {
   if (session.status === "anonymous") {
     return (
       <LoginPage
+        notice={session.notice}
         onSignedIn={(me, password) => {
-          setSession({ status: "in", me, signInPassword: password });
+          // Keep the password only while it is needed for the forced first change.
+          setSession({ status: "in", me, signInPassword: me.must_change_password ? password : "" });
           if (!me.must_change_password) go("keys");
         }}
       />
@@ -63,6 +73,7 @@ function App() {
       <FirstLoginPage
         me={me}
         initialPassword={signInPassword}
+        onUnauthorized={expired}
         onDone={() => {
           setSession({ status: "in", me: { ...me, must_change_password: false }, signInPassword: "" });
           go("keys");
@@ -71,11 +82,10 @@ function App() {
     );
   }
 
-  // "/admin" is just the entry point: signed-in users land on the key list.
   const page = route === "password" ? "password" : "keys";
   return (
     <Shell layout={layout} route={page} email={me.email} go={go} onSignOut={signOut}>
-      {page === "password" ? <PasswordPage /> : <KeysPage layout={layout} onUnauthorized={signedOut} />}
+      {page === "password" ? <PasswordPage onUnauthorized={expired} /> : <KeysPage layout={layout} onUnauthorized={expired} />}
     </Shell>
   );
 }
