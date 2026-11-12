@@ -91,7 +91,8 @@ async fn recover_fails_running_and_requeues_queued() {
     let args = std::fs::read_to_string(dir.path().join("queued1.args.txt")).unwrap();
     let args: Vec<&str> = args.lines().collect();
     assert!(
-        args.windows(2).any(|w| w == ["-f", "137+bestaudio/best"]),
+        args.windows(2)
+            .any(|w| w == ["-f", "137+bestaudio[ext=m4a]/137+bestaudio/137/best"]),
         "{args:?}"
     );
     mgr.shutdown().await;
