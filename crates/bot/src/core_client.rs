@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reclip_shared::{
@@ -62,6 +62,11 @@ impl CoreError {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse().ok());
         let text = resp.text().await.unwrap_or_default();
+        let text = if text.len() > 2000 && serde_json::from_str::<ApiError>(&text).is_err() {
+            text.chars().take(500).collect()
+        } else {
+            text
+        };
         match serde_json::from_str::<ApiError>(&text) {
             Ok(e) => Self {
                 status,
@@ -122,6 +127,7 @@ impl HttpCore {
     pub fn new(base: &str, key: &str) -> Result<Self, CoreError> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(CoreError::transport)?;
         Ok(Self {
@@ -205,19 +211,49 @@ impl Core for HttpCore {
             .req(Method::GET, &format!("/jobs/{id}/file"), Some(user))
             .timeout(Duration::from_secs(30 * 60));
         let mut resp = Self::send(r).await?;
+        let part = part_path(dest);
+        // Declared before the file so the file is closed first when dropped.
+        let mut guard = PartGuard {
+            path: part.clone(),
+            committed: false,
+        };
         let io =
             |e: std::io::Error| CoreError::local(format!("cannot write {}: {e}", dest.display()));
-        let mut file = tokio::fs::File::create(dest).await.map_err(io)?;
+        let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
         let mut total = 0u64;
         while let Some(chunk) = resp.chunk().await.map_err(CoreError::transport)? {
             file.write_all(&chunk).await.map_err(io)?;
             total += chunk.len() as u64;
         }
         file.flush().await.map_err(io)?;
+        drop(file);
+        tokio::fs::rename(&part, dest).await.map_err(io)?;
+        guard.committed = true;
         Ok(total)
     }
 
     async fn signed_link(&self, user: i64, id: &str) -> Result<LinkResponse, CoreError> {
         Self::json(self.req(Method::POST, &format!("/jobs/{id}/link"), Some(user))).await
+    }
+}
+
+/// `<dest>.part`: where a download lives until it is complete.
+fn part_path(dest: &Path) -> PathBuf {
+    let mut name = dest.as_os_str().to_owned();
+    name.push(".part");
+    name.into()
+}
+
+/// Removes the partial file on any error, and when the future is dropped.
+struct PartGuard {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for PartGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }

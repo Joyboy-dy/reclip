@@ -1,12 +1,14 @@
 //! Telegram Bot API access.
 
 pub mod client;
+pub mod error;
 pub mod types;
 
 use std::future::Future;
 use std::path::Path;
 
-pub use client::{HttpTelegram, TgError};
+pub use client::HttpTelegram;
+pub use error::TgError;
 pub use types::*;
 
 /// The Bot API calls the bot uses. Used with generics, never `dyn`.

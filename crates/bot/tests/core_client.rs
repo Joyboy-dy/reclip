@@ -215,6 +215,66 @@ async fn download_file_streams_to_disk() {
     assert_eq!((e.status, e.code), (404, ErrorCode::Unavailable));
 }
 
+/// Serves a 200 whose Content-Length promises more than is sent. With `stall`
+/// the connection stays open after the partial body, otherwise it is closed.
+async fn truncated_server(stall: bool) -> String {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                let head = "HTTP/1.1 200 OK\r\ncontent-length: 1000000\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(&[1u8; 4096]).await;
+                let _ = sock.flush().await;
+                if stall {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                }
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn dir_is_empty(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).unwrap().next().is_none()
+}
+
+#[tokio::test]
+async fn failed_download_leaves_no_file() {
+    let core = HttpCore::new(&truncated_server(false).await, KEY).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("out.bin");
+    assert!(core.download_file(9, "j1", &dest).await.is_err());
+    assert!(
+        dir_is_empty(dir.path()),
+        "neither dest nor .part may remain"
+    );
+}
+
+#[tokio::test]
+async fn dropped_download_leaves_no_file() {
+    let core = HttpCore::new(&truncated_server(true).await, KEY).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("out.bin");
+    let res = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        core.download_file(9, "j1", &dest),
+    )
+    .await;
+    assert!(res.is_err(), "the download must still be running");
+    assert!(
+        dir_is_empty(dir.path()),
+        "neither dest nor .part may remain"
+    );
+}
+
 #[tokio::test]
 async fn transport_error_hides_url() {
     let core = HttpCore::new("http://127.0.0.1:1", KEY).unwrap();

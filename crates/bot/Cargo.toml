@@ -24,5 +24,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time"] }
 wiremock = "0.6"
 tempfile = "3"

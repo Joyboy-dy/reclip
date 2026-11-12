@@ -1,79 +1,22 @@
 //! reqwest implementation of the Bot API client.
 
-use std::fmt;
 use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
 
 use reqwest::multipart::{Form, Part};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio_util::io::ReaderStream;
 
 use super::Telegram;
+use super::error::{SentMessage, TgError, parse};
 use super::types::{InlineKeyboardMarkup, MessageId, Update};
 
 const MAX_RETRY_WAIT: u64 = 60;
+const UPLOAD_CHUNK: usize = 64 * 1024;
 const JSON_TIMEOUT: Duration = Duration::from_secs(30);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-
-/// A Bot API failure. Never contains the bot token (no URL is kept).
-#[derive(Debug, Clone)]
-pub struct TgError {
-    /// Bot API `error_code`, or `None` for transport failures.
-    pub code: Option<u16>,
-    pub description: String,
-    pub retry_after: Option<u64>,
-}
-
-impl fmt::Display for TgError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.code {
-            Some(c) => write!(f, "telegram error {c}: {}", self.description),
-            None => write!(f, "telegram request failed: {}", self.description),
-        }
-    }
-}
-
-impl std::error::Error for TgError {}
-
-impl TgError {
-    fn transport(e: reqwest::Error) -> Self {
-        // The Bot API URL contains the token: drop it from the error.
-        Self {
-            code: None,
-            description: e.without_url().to_string(),
-            retry_after: None,
-        }
-    }
-    fn local(msg: impl Into<String>) -> Self {
-        Self {
-            code: None,
-            description: msg.into(),
-            retry_after: None,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct Envelope<T> {
-    ok: bool,
-    result: Option<T>,
-    description: Option<String>,
-    error_code: Option<u16>,
-    parameters: Option<Params>,
-}
-
-#[derive(Deserialize)]
-struct Params {
-    retry_after: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct SentMessage {
-    message_id: MessageId,
-}
 
 pub struct HttpTelegram {
     http: reqwest::Client,
@@ -84,6 +27,8 @@ impl HttpTelegram {
     pub fn new(api_url: &str, token: &str) -> Result<Self, TgError> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
+            // A redirect would carry the token URL into reqwest's logs.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(TgError::transport)?;
         Ok(Self {
@@ -94,23 +39,6 @@ impl HttpTelegram {
 
     fn url(&self, method: &str) -> String {
         format!("{}/{method}", self.base)
-    }
-
-    async fn parse<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, TgError> {
-        let status = resp.status().as_u16();
-        let env: Envelope<T> = resp.json().await.map_err(|e| {
-            let mut err = TgError::transport(e);
-            err.code = Some(status);
-            err
-        })?;
-        match (env.ok, env.result) {
-            (true, Some(r)) => Ok(r),
-            _ => Err(TgError {
-                code: env.error_code.or(Some(status)),
-                description: env.description.unwrap_or_default(),
-                retry_after: env.parameters.and_then(|p| p.retry_after),
-            }),
-        }
     }
 
     async fn post_json<T: DeserializeOwned>(
@@ -127,7 +55,7 @@ impl HttpTelegram {
             .send()
             .await
             .map_err(TgError::transport)?;
-        Self::parse(resp).await
+        parse(resp).await
     }
 
     /// Runs `f`; on 429 waits `retry_after` (capped) and tries once more.
@@ -168,8 +96,11 @@ impl HttpTelegram {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let body = reqwest::Body::wrap_stream(ReaderStream::new(file));
-        Ok(Part::stream_with_length(body, len).file_name(name))
+        let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, UPLOAD_CHUNK));
+        Part::stream_with_length(body, len)
+            .file_name(name)
+            .mime_str(mime_for(path))
+            .map_err(TgError::transport)
     }
 
     async fn upload(
@@ -193,10 +124,27 @@ impl HttpTelegram {
                     .send()
                     .await
                     .map_err(TgError::transport)?;
-                Self::parse(resp).await
+                parse(resp).await
             })
             .await?;
         Ok(())
+    }
+}
+
+fn mime_for(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("mp4") => "video/mp4",
+        Some("mkv") => "video/x-matroska",
+        Some("mov") => "video/quicktime",
+        Some("mp3") => "audio/mpeg",
+        Some("m4a") => "audio/mp4",
+        Some("opus") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        Some("wav") => "audio/wav",
+        _ => "application/octet-stream",
     }
 }
 
