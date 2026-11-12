@@ -9,6 +9,7 @@ pub mod keys;
 pub mod limits;
 pub mod origin;
 pub mod quota;
+pub mod request;
 pub mod resolver;
 pub mod secrets;
 pub mod ssrf;

@@ -21,6 +21,7 @@ use reclip_shared::{ApiError, ErrorCode};
 use serde::de::DeserializeOwned;
 
 use crate::jobs::ManagerError;
+use crate::service::manager_api_error;
 
 /// Newtype so `ApiError` (defined in `reclip-shared`) can be an axum response.
 #[derive(Debug)]
@@ -71,10 +72,11 @@ impl From<HttpError> for ManagerError {
 
 impl IntoResponse for ManagerError {
     fn into_response(self) -> Response {
-        match self {
-            ManagerError::NotFound => not_found("Job not found"),
-            ManagerError::Api(e) => HttpError(e).into_response(),
-        }
+        let status = match self {
+            ManagerError::NotFound => StatusCode::NOT_FOUND,
+            ManagerError::Api(e) => return HttpError(e).into_response(),
+        };
+        (status, Json(manager_api_error(self))).into_response()
     }
 }
 

@@ -2,19 +2,17 @@
 //! key acting for a Telegram user. [`caller_layer`] resolves it once per
 //! request; handlers extract the [`Caller`] and check the scope they need.
 
-use std::net::SocketAddr;
-
-use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::HeaderValue;
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, SET_COOKIE, WWW_AUTHENTICATE};
+use axum::http::header::{AUTHORIZATION, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use reclip_shared::{ApiKeyInfo, ErrorCode, Scope};
 
 use super::cookie;
-use super::ip::{Forwarded, forwarded};
-use super::keys::{KeyError, verify_key};
+use super::ip::Forwarded;
+use super::request::{bearer_key, no_store, request_origin};
 use crate::app::AppState;
 use crate::config::{Config, Limits};
 use crate::http::{HttpError, api_error};
@@ -122,46 +120,6 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
     };
     no_store(&mut res);
     res
-}
-
-/// Responses are per caller: never let a shared cache keep them. A handler
-/// may still let the caller's own browser cache (`private, ...`).
-pub(crate) fn no_store(res: &mut Response) {
-    let private = res
-        .headers()
-        .get(CACHE_CONTROL)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("private"));
-    if !private {
-        res.headers_mut()
-            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    }
-}
-
-/// Where the request came from, once trusted proxies are accounted for.
-pub(crate) fn request_origin(s: &AppState, parts: &Parts) -> Forwarded {
-    let peer = parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip());
-    let mut fwd = forwarded(peer, &parts.headers, &s.cfg.trusted_proxies);
-    if fwd.host.is_none() {
-        // HTTP/2 carries the host in the `:authority` pseudo-header.
-        fwd.host = parts.uri.authority().map(|a| a.to_string());
-    }
-    fwd
-}
-
-/// The key of a `Bearer` credential, or the 401 (500 on a store failure).
-pub(crate) async fn bearer_key(s: &AppState, auth: &HeaderValue) -> Result<ApiKeyInfo, Response> {
-    let invalid = || unauthorized("Invalid or expired API key");
-    let token = bearer(auth).ok_or_else(invalid)?;
-    match verify_key(&s.store, &s.key_usage, token).await {
-        Ok(info) => Ok(info),
-        Err(KeyError::Invalid) => Err(invalid()),
-        // Already logged by `verify_key`.
-        Err(KeyError::Internal) => Err(error(ErrorCode::Internal, "Internal error")),
-    }
 }
 
 /// The caller, plus the cookie value to set when one was just minted.

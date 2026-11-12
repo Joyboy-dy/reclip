@@ -18,9 +18,8 @@ use reclip_shared::ErrorCode;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
-use crate::access::caller::{
-    Caller, ON_BEHALF_OF, bearer_key, error, key_caller, no_store, request_origin, unauthorized,
-};
+use crate::access::caller::{Caller, ON_BEHALF_OF, error, key_caller, unauthorized};
+use crate::access::request::{bearer_key, no_store, request_origin};
 use crate::app::AppState;
 
 pub use tools::Tools;
@@ -33,6 +32,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .with_json_response(true)
         .with_sse_keep_alive(None)
         // A public server: the API key, not the Host header, is the gate.
+        // Safe against DNS rebinding because only `Bearer` keys are accepted
+        // here: no cookie or other ambient credential a browser would send.
         .disable_allowed_hosts()
         .with_cancellation_token(state.jobs.shutdown_token().child_token());
     let tools_state = state.clone();

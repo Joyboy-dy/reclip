@@ -25,11 +25,15 @@ pub enum ServiceError {
 }
 
 impl ServiceError {
-    /// The `{code, message}` an API client would get in the response body.
+    /// The `{code, message}` for a client without HTTP headers (MCP): a
+    /// quota refusal names the wait that REST sends as `Retry-After`.
     pub fn api_error(&self) -> ApiError {
         match self {
             ServiceError::Api(e) => e.clone(),
-            ServiceError::Limited(l) => api_error(ErrorCode::RateLimited, &l.message),
+            ServiceError::Limited(l) => api_error(
+                ErrorCode::RateLimited,
+                &format!("{}; try again in {} s", l.message, l.retry_after),
+            ),
         }
     }
 }

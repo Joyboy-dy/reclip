@@ -132,8 +132,21 @@ async fn mcp_requires_a_key() {
         .header(ON_BEHALF_OF, "tg:42");
     expect_status(delegated, 403, "forbidden").await;
     // Stateless server: no session stream to open or close.
-    let get = s.visitor.client.get(format!("{}/mcp", s.base));
-    assert_eq!(get.bearer_auth(&key).send().await.unwrap().status(), 405);
+    let url = format!("{}/mcp", s.base);
+    let get = s.visitor.client.get(&url).bearer_auth(&key);
+    assert_eq!(get.send().await.unwrap().status(), 405);
+    let delete = s.visitor.client.delete(&url).bearer_auth(&key);
+    assert_eq!(delete.send().await.unwrap().status(), 405);
+}
+
+#[tokio::test]
+async fn revoked_key_is_refused() {
+    let s = TestServer::start(|_| {}).await;
+    let key = s.key(Some(vec![Scope::JobsRead])).await;
+    let mcp = Mcp::new(&s, Some(&key));
+    assert!(mcp.tool("list_downloads", json!({})).await.is_ok());
+    assert!(s.store.revoke_key(&key[4..12]).await.unwrap());
+    expect_status(mcp.post("tools/list", json!({})), 401, "unauthorized").await;
 }
 
 #[tokio::test]
@@ -172,7 +185,19 @@ async fn tools_list_matches_shared_defs() {
 async fn start_and_get_download_with_signed_link() {
     let s = TestServer::start(|_| {}).await;
     let mcp = Mcp::agent(&s, &[Scope::JobsCreate, Scope::JobsRead]).await;
-    let id = mcp.start("https://ok").await;
+    // No format: mp4; quality is the format id from probe_media.
+    let job = mcp
+        .tool(
+            "start_download",
+            json!({"url": "https://ok", "quality": "137"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (job["format"].as_str(), job["format_id"].as_str()),
+        (Some("mp4"), Some("137"))
+    );
+    let id = job["id"].as_str().unwrap().to_string();
     let job = mcp.wait_done(&id).await;
     let link = job["download_url"].as_str().unwrap();
     assert!(link.starts_with(&format!("{}/d/{id}.", s.base)), "{link}");
@@ -236,10 +261,14 @@ async fn mcp_respects_scopes_and_quotas() {
     assert!(probed.is_ok(), "{probed:?}");
     // The refused target used no slot: one creation, then the hourly cap.
     mcp.start("https://slow.example/1").await;
-    let code = mcp
-        .error_code("start_download", json!({"url": "https://ok"}))
-        .await;
-    assert_eq!(code, "rate_limited");
+    let e = mcp
+        .tool("start_download", json!({"url": "https://ok"}))
+        .await
+        .unwrap_err();
+    assert_eq!(e["code"], "rate_limited");
+    // No Retry-After header over MCP: the wait is in the message.
+    let message = e["message"].as_str().unwrap();
+    assert!(message.contains("; try again in "), "{message}");
     let code = mcp.error_code("list_downloads", json!({})).await;
     assert_eq!(code, "forbidden");
 }
