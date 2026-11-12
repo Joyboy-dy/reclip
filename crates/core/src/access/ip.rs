@@ -26,6 +26,17 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|v| v.to_str().ok())
 }
 
+/// Comma-separated entries of every header line named `name`, in order.
+fn list_entries<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a str> {
+    headers
+        .get_all(name)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect()
+}
+
 pub fn forwarded(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpNet]) -> Forwarded {
     let is_trusted = |ip: &IpAddr| trusted.iter().any(|n| n.contains(ip));
     let host_header = || {
@@ -51,23 +62,25 @@ pub fn forwarded(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[IpNet]) -
         };
     }
 
-    // Walk X-Forwarded-For right to left, skipping our own proxies.
-    let chain: Option<Vec<IpAddr>> = header_str(headers, "x-forwarded-for").and_then(|v| {
-        v.split(',')
-            .map(|p| p.trim().parse::<IpAddr>().ok().map(normalize))
-            .collect()
-    });
-    let client_ip = chain
-        .and_then(|c| {
-            c.iter()
-                .rev()
-                .find(|ip| !is_trusted(ip))
-                .or_else(|| c.first())
-                .copied()
-        })
-        .unwrap_or(peer);
-    let https = header_str(headers, "x-forwarded-proto")
-        .is_some_and(|v| v.split(',').next().is_some_and(|p| p.trim() == "https"));
+    // Walk X-Forwarded-For right to left across all header lines, skipping our
+    // own proxies. Stop at the first unreadable entry.
+    let mut last_trusted = None;
+    let mut found = None;
+    for entry in list_entries(headers, "x-forwarded-for").iter().rev() {
+        let Ok(ip) = entry.parse::<IpAddr>() else {
+            break;
+        };
+        let ip = normalize(ip);
+        if !is_trusted(&ip) {
+            found = Some(ip);
+            break;
+        }
+        last_trusted = Some(ip);
+    }
+    let client_ip = found.or(last_trusted).unwrap_or(peer);
+    let https = list_entries(headers, "x-forwarded-proto")
+        .last()
+        .is_some_and(|p| p.eq_ignore_ascii_case("https"));
     let host = header_str(headers, "x-forwarded-host")
         .and_then(|v| v.split(',').next())
         .map(str::trim)
@@ -134,6 +147,25 @@ mod tests {
         let f = forwarded(Some(ip("10.0.1.9")), &HeaderMap::new(), &nets());
         assert_eq!(f.client_ip, ip("10.0.1.9"));
         assert!(!f.https && f.host.is_none());
+    }
+
+    #[test]
+    fn repeated_lines_and_unreadable_entries() {
+        let peer = Some(ip("10.0.1.9"));
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-for", "1.1.1.1".parse().unwrap());
+        h.append("x-forwarded-for", "203.0.113.7, 10.0.0.3".parse().unwrap());
+        h.append("x-forwarded-proto", "https".parse().unwrap());
+        h.append("x-forwarded-proto", "HTTP".parse().unwrap());
+        let f = forwarded(peer, &h, &nets());
+        assert_eq!(f.client_ip, ip("203.0.113.7"));
+        assert!(!f.https);
+        h.append("x-forwarded-proto", "HTTPS".parse().unwrap());
+        assert!(forwarded(peer, &h, &nets()).https);
+        let h = hm(&[("x-forwarded-for", "x, 203.0.113.7")]);
+        assert_eq!(forwarded(peer, &h, &nets()).client_ip, ip("203.0.113.7"));
+        let h = hm(&[("x-forwarded-for", "203.0.113.7, x")]);
+        assert_eq!(forwarded(peer, &h, &nets()).client_ip, ip("10.0.1.9"));
     }
 
     #[test]

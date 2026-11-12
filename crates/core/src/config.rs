@@ -145,7 +145,9 @@ impl Config {
             trusted_proxies: parse_proxies(
                 &get("RECLIP_TRUSTED_PROXIES").unwrap_or_else(|| DEFAULT_PROXIES.into()),
             ),
-            public_url: get("RECLIP_PUBLIC_URL").map(|u| u.trim_end_matches('/').to_string()),
+            public_url: get("RECLIP_PUBLIC_URL")
+                .map(|u| u.trim_end_matches('/').to_string())
+                .filter(|u| !u.is_empty()),
             admin_token: get("RECLIP_ADMIN_TOKEN"),
             public_web,
             link_ttl: Duration::from_secs(num("RECLIP_LINK_TTL").unwrap_or(21600)),
@@ -237,6 +239,8 @@ mod tests {
         assert_eq!(c.limits.web.probes_per_minute, 7);
         assert_eq!(c.limits.key.jobs_per_hour, 200);
         assert_eq!(c.public_url.as_deref(), Some("https://r.example"));
+        let c = Config::from_env(&|k| (k == "RECLIP_PUBLIC_URL").then(|| "//".into()));
+        assert_eq!(c.public_url, None);
     }
 
     #[test]
