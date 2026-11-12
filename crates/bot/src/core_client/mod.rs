@@ -1,88 +1,20 @@
 //! Client for the ReClip core API.
 
-use std::fmt;
+mod error;
+mod part;
+
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::time::Duration;
 
-use reclip_shared::{
-    ApiError, CreateJobRequest, ErrorCode, Job, JobList, LinkResponse, ProbeResponse, PublicConfig,
-};
+pub use error::CoreError;
+use part::{PartGuard, part_path};
+use reclip_shared::{CreateJobRequest, Job, JobList, LinkResponse, ProbeResponse, PublicConfig};
 use reqwest::{Method, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
-
-/// A core API failure. `status` is 0 when the request never got an answer.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CoreError {
-    pub status: u16,
-    pub code: ErrorCode,
-    pub message: String,
-    /// Seconds, from the `Retry-After` header of a 429.
-    pub retry_after: Option<u64>,
-}
-
-impl fmt::Display for CoreError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "core error {} ({:?}): {}",
-            self.status, self.code, self.message
-        )
-    }
-}
-
-impl std::error::Error for CoreError {}
-
-impl CoreError {
-    fn transport(e: reqwest::Error) -> Self {
-        Self {
-            status: 0,
-            code: ErrorCode::Internal,
-            message: e.without_url().to_string(),
-            retry_after: None,
-        }
-    }
-
-    fn local(msg: String) -> Self {
-        Self {
-            status: 0,
-            code: ErrorCode::Internal,
-            message: msg,
-            retry_after: None,
-        }
-    }
-
-    async fn from_response(resp: Response) -> Self {
-        let status = resp.status().as_u16();
-        let retry_after = resp
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse().ok());
-        let text = resp.text().await.unwrap_or_default();
-        let text = if text.len() > 2000 && serde_json::from_str::<ApiError>(&text).is_err() {
-            text.chars().take(500).collect()
-        } else {
-            text
-        };
-        match serde_json::from_str::<ApiError>(&text) {
-            Ok(e) => Self {
-                status,
-                code: e.code,
-                message: e.message,
-                retry_after,
-            },
-            Err(_) => Self {
-                status,
-                code: ErrorCode::Internal,
-                message: text,
-                retry_after,
-            },
-        }
-    }
-}
 
 /// The core calls the bot uses. `user` is the Telegram user id.
 pub trait Core: Send + Sync {
@@ -99,8 +31,13 @@ pub trait Core: Send + Sync {
     ) -> impl Future<Output = Result<Job, CoreError>> + Send;
     fn get_job(&self, user: i64, id: &str) -> impl Future<Output = Result<Job, CoreError>> + Send;
     fn list_jobs(&self, user: i64) -> impl Future<Output = Result<Vec<Job>, CoreError>> + Send;
-    fn cancel_job(&self, user: i64, id: &str)
-    -> impl Future<Output = Result<(), CoreError>> + Send;
+    /// The job as the core left it: `Cancelled` when it was stopped, its
+    /// final state when it had already ended.
+    fn cancel_job(
+        &self,
+        user: i64,
+        id: &str,
+    ) -> impl Future<Output = Result<Job, CoreError>> + Send;
     fn delete_job(&self, user: i64, id: &str)
     -> impl Future<Output = Result<(), CoreError>> + Send;
     /// Streams the file to `dest` and returns the number of bytes written.
@@ -130,7 +67,9 @@ pub trait Core: Send + Sync {
 pub struct HttpCore {
     http: reqwest::Client,
     base: String,
-    key: String,
+    key: RwLock<String>,
+    /// Where the key came from: read again when the core refuses it.
+    key_file: Option<PathBuf>,
 }
 
 impl HttpCore {
@@ -143,15 +82,49 @@ impl HttpCore {
         Ok(Self {
             http,
             base: base.trim_end_matches('/').into(),
-            key: key.into(),
+            key: RwLock::new(key.into()),
+            key_file: None,
         })
+    }
+
+    /// The key was read from `path`: on a 401 the file is read again (the
+    /// core writes a new key when the old one was revoked or lost).
+    pub fn with_key_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.key_file = Some(path.into());
+        self
+    }
+
+    fn key(&self) -> String {
+        self.key.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Reads the key file again; true when it holds a different key, which
+    /// is then used.
+    fn reload_key(&self) -> bool {
+        let Some(path) = &self.key_file else {
+            return false;
+        };
+        let fresh = match std::fs::read_to_string(path) {
+            Ok(raw) => raw.trim().to_string(),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "cannot read the bot key file");
+                return false;
+            }
+        };
+        let mut key = self.key.write().unwrap_or_else(|e| e.into_inner());
+        if fresh.is_empty() || *key == fresh {
+            return false;
+        }
+        *key = fresh;
+        tracing::info!("bot key reloaded from its file");
+        true
     }
 
     fn req(&self, method: Method, path: &str, user: Option<i64>) -> RequestBuilder {
         let mut r = self
             .http
             .request(method, format!("{}/api/v1{path}", self.base))
-            .bearer_auth(&self.key)
+            .bearer_auth(self.key())
             .timeout(Duration::from_secs(60));
         if let Some(u) = user {
             r = r.header("X-Reclip-On-Behalf-Of", format!("tg:{u}"));
@@ -159,7 +132,27 @@ impl HttpCore {
         r
     }
 
-    async fn send(r: RequestBuilder) -> Result<Response, CoreError> {
+    /// Sends the request `build` makes. When the core refuses the key
+    /// (401), the key file is read once more and, if it changed, the
+    /// request is made again with the new key.
+    async fn send(&self, build: impl Fn() -> RequestBuilder) -> Result<Response, CoreError> {
+        let first = Self::send_once(build()).await;
+        let retried = match first {
+            Err(e) if e.status == 401 && self.reload_key() => Self::send_once(build()).await,
+            other => other,
+        };
+        if let Err(e) = &retried
+            && e.status == 401
+        {
+            tracing::error!(
+                "the core rejected the bot key: restart the core (it writes a new key), \
+                 or check RECLIP_BOT_KEY"
+            );
+        }
+        retried
+    }
+
+    async fn send_once(r: RequestBuilder) -> Result<Response, CoreError> {
         let resp = r.send().await.map_err(CoreError::transport)?;
         if resp.status().is_success() {
             Ok(resp)
@@ -178,10 +171,13 @@ impl HttpCore {
         dest: &Path,
         max: Option<u64>,
     ) -> Result<Option<u64>, CoreError> {
-        let r = self
-            .req(Method::GET, &format!("/jobs/{id}/file"), Some(user))
-            .timeout(Duration::from_secs(30 * 60));
-        let mut resp = Self::send(r).await?;
+        let file = format!("/jobs/{id}/file");
+        let mut resp = self
+            .send(|| {
+                self.req(Method::GET, &file, Some(user))
+                    .timeout(Duration::from_secs(30 * 60))
+            })
+            .await?;
         let over = |n: u64| max.is_some_and(|m| n > m);
         if resp.content_length().is_some_and(over) {
             return Ok(None);
@@ -210,8 +206,11 @@ impl HttpCore {
         Ok(Some(total))
     }
 
-    async fn json<T: DeserializeOwned>(r: RequestBuilder) -> Result<T, CoreError> {
-        Self::send(r)
+    async fn json<T: DeserializeOwned>(
+        &self,
+        build: impl Fn() -> RequestBuilder,
+    ) -> Result<T, CoreError> {
+        self.send(build)
             .await?
             .json()
             .await
@@ -221,39 +220,45 @@ impl HttpCore {
 
 impl Core for HttpCore {
     async fn config(&self) -> Result<PublicConfig, CoreError> {
-        Self::json(self.req(Method::GET, "/config", None)).await
+        self.json(|| self.req(Method::GET, "/config", None)).await
     }
 
     async fn probe(&self, user: i64, url: &str) -> Result<ProbeResponse, CoreError> {
         // Probing can take a while (yt-dlp), so allow more than the default.
-        let r = self
-            .req(Method::POST, "/probe", Some(user))
-            .timeout(Duration::from_secs(180))
-            .json(&json!({ "url": url }));
-        Self::json(r).await
+        self.json(|| {
+            self.req(Method::POST, "/probe", Some(user))
+                .timeout(Duration::from_secs(180))
+                .json(&json!({ "url": url }))
+        })
+        .await
     }
 
     async fn create_job(&self, user: i64, req: &CreateJobRequest) -> Result<Job, CoreError> {
-        Self::json(self.req(Method::POST, "/jobs", Some(user)).json(req)).await
+        self.json(|| self.req(Method::POST, "/jobs", Some(user)).json(req))
+            .await
     }
 
     async fn get_job(&self, user: i64, id: &str) -> Result<Job, CoreError> {
-        Self::json(self.req(Method::GET, &format!("/jobs/{id}"), Some(user))).await
+        let path = format!("/jobs/{id}");
+        self.json(|| self.req(Method::GET, &path, Some(user))).await
     }
 
     async fn list_jobs(&self, user: i64) -> Result<Vec<Job>, CoreError> {
-        let list: JobList = Self::json(self.req(Method::GET, "/jobs", Some(user))).await?;
+        let list: JobList = self
+            .json(|| self.req(Method::GET, "/jobs", Some(user)))
+            .await?;
         Ok(list.jobs)
     }
 
-    async fn cancel_job(&self, user: i64, id: &str) -> Result<(), CoreError> {
-        Self::send(self.req(Method::POST, &format!("/jobs/{id}/cancel"), Some(user)))
+    async fn cancel_job(&self, user: i64, id: &str) -> Result<Job, CoreError> {
+        let path = format!("/jobs/{id}/cancel");
+        self.json(|| self.req(Method::POST, &path, Some(user)))
             .await
-            .map(|_| ())
     }
 
     async fn delete_job(&self, user: i64, id: &str) -> Result<(), CoreError> {
-        Self::send(self.req(Method::DELETE, &format!("/jobs/{id}"), Some(user)))
+        let path = format!("/jobs/{id}");
+        self.send(|| self.req(Method::DELETE, &path, Some(user)))
             .await
             .map(|_| ())
     }
@@ -274,27 +279,8 @@ impl Core for HttpCore {
     }
 
     async fn signed_link(&self, user: i64, id: &str) -> Result<LinkResponse, CoreError> {
-        Self::json(self.req(Method::POST, &format!("/jobs/{id}/link"), Some(user))).await
-    }
-}
-
-/// `<dest>.part`: where a download lives until it is complete.
-fn part_path(dest: &Path) -> PathBuf {
-    let mut name = dest.as_os_str().to_owned();
-    name.push(".part");
-    name.into()
-}
-
-/// Removes the partial file on any error, and when the future is dropped.
-struct PartGuard {
-    path: PathBuf,
-    committed: bool,
-}
-
-impl Drop for PartGuard {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = std::fs::remove_file(&self.path);
-        }
+        let path = format!("/jobs/{id}/link");
+        self.json(|| self.req(Method::POST, &path, Some(user)))
+            .await
     }
 }

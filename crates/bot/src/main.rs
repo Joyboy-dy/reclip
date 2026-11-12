@@ -7,7 +7,9 @@ use reclip_bot::files::wipe_tmp;
 use reclip_bot::state::StateStore;
 use reclip_bot::telegram::HttpTelegram;
 
-/// How long running deliveries get to finish after SIGTERM / Ctrl-C.
+/// How long tasks get to wind down after SIGTERM / Ctrl-C. Deliveries are
+/// aborted at once and update handlers are dropped after this delay; the
+/// state file keeps every tracked job, so the next start delivers them.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(8);
 
 #[tokio::main]
@@ -27,7 +29,10 @@ async fn main() {
     // Debug hides the token and the key.
     tracing::info!(?cfg, "configuration loaded");
     let tg = HttpTelegram::new(&cfg.api_url, &cfg.token).unwrap_or_else(|e| fail("telegram", &e));
-    let core = HttpCore::new(&cfg.core_url, &cfg.key).unwrap_or_else(|e| fail("core", &e));
+    let mut core = HttpCore::new(&cfg.core_url, &cfg.key).unwrap_or_else(|e| fail("core", &e));
+    if let Some(path) = &cfg.key_file {
+        core = core.with_key_file(path);
+    }
     // A corrupt file is renamed aside, not overwritten.
     let state = StateStore::open(&cfg.state_path);
     // Leftovers of a crash: tracked jobs are downloaded again.
@@ -42,7 +47,11 @@ async fn main() {
         tracing::info!("shutdown requested");
         token.cancel();
     });
-    app.clone().run().await;
+    if let Err(e) = app.clone().run().await {
+        // A bad token: restarting cannot help, say it and stop.
+        eprintln!("reclip-bot: {e:#}");
+        std::process::exit(1);
+    }
     app.tasks.close();
     if tokio::time::timeout(SHUTDOWN_GRACE, app.tasks.wait())
         .await

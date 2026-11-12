@@ -3,11 +3,13 @@
 
 use std::sync::Arc;
 
-use crate::app::{App, core_error_text};
+use crate::app::App;
 use crate::core_client::Core;
+use crate::deliver::Delivery;
 use crate::i18n::{self, Lang};
 use crate::state::Tracked;
 use crate::telegram::Telegram;
+use crate::tracker::NOT_FOUND;
 
 /// Why the file goes as a link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,11 +21,13 @@ pub enum LinkReason {
 }
 
 /// Replaces the progress message by a signed link and stops tracking.
+/// When the core cannot give the link (other than 404: the job is gone),
+/// the job stays tracked and the tracker tries again later.
 pub async fn send_link<T: Telegram + 'static, C: Core + 'static>(
     app: &Arc<App<T, C>>,
     t: &Tracked,
     reason: LinkReason,
-) {
+) -> Delivery {
     let l = Lang::from_stored(&t.lang);
     let text = match app.core.signed_link(t.user_id, &t.job_id).await {
         Ok(link) => match public_link(&link.url, app.settings.public_url.as_deref()) {
@@ -36,14 +40,19 @@ pub async fn send_link<T: Telegram + 'static, C: Core + 'static>(
                 i18n::link_unavailable(l, matches!(reason, LinkReason::TooBig(_)))
             }
         },
+        Err(e) if e.status == NOT_FOUND => {
+            tracing::info!(job = %t.job_id, "job gone before its link, dropped");
+            i18n::file_expired(l)
+        }
         Err(e) => {
-            tracing::warn!(job = %t.job_id, error = %e, "cannot get a signed link");
-            core_error_text(l, &e)
+            tracing::warn!(job = %t.job_id, error = %e, "cannot get a signed link, will retry");
+            return Delivery::Retry;
         }
     };
     app.replace(t.chat_id, Some(t.message_id), &text, None)
         .await;
     app.state.remove(&t.job_id);
+    Delivery::Over
 }
 
 fn link_text(l: Lang, reason: LinkReason, url: &str) -> String {

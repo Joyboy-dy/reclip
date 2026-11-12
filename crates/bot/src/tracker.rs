@@ -8,7 +8,7 @@ use reclip_shared::{ErrorCode, Job, JobState};
 
 use crate::app::{App, MAX_TEXT, cancel_keyboard, clip};
 use crate::core_client::Core;
-use crate::deliver;
+use crate::deliver::{self, Delivery};
 use crate::i18n::{self, Lang};
 use crate::state::Tracked;
 use crate::telegram::Telegram;
@@ -25,6 +25,8 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
     let l = Lang::from_stored(&t.lang);
     let kb = cancel_keyboard(l, &t.job_id);
     let mut failures = 0u32;
+    // Deliveries that ended in `Retry` (core unreachable).
+    let mut retries = 0u32;
     loop {
         let mut wait = app.settings.poll_interval;
         let read = app.core.get_job(t.user_id, &t.job_id).await;
@@ -37,11 +39,7 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
                 app.state.remove(&t.job_id);
                 // No live Cancel button on a job that no longer exists.
                 let gone = i18n::job_gone(l);
-                if let Err(e) = app
-                    .tg
-                    .edit_message(t.chat_id, t.message_id, &gone, None)
-                    .await
-                {
+                if let Err(e) = app.edit(t.chat_id, t.message_id, &gone, None).await {
                     tracing::warn!(job = %t.job_id, error = %e, "edit failed");
                 }
                 return;
@@ -50,7 +48,7 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
                 tracing::warn!(job = %t.job_id, status = e.status, error = %e, "cannot read the job");
                 // Back off up to a minute while the core misbehaves.
                 failures = failures.saturating_add(1);
-                wait = (wait * 2u32.saturating_pow(failures.min(5))).min(MAX_BACKOFF);
+                wait = backoff(wait, failures);
                 if let Some(s) = e.retry_after {
                     wait = wait.max(Duration::from_secs(s));
                 }
@@ -73,7 +71,13 @@ pub async fn track<T: Telegram + 'static, C: Core + 'static>(
                         shown = text;
                     }
                 }
-                JobState::Done => return deliver::deliver(&app, &t, &job).await,
+                JobState::Done => match deliver::deliver(&app, &t, &job, retries).await {
+                    Delivery::Over => return,
+                    Delivery::Retry => {
+                        retries = retries.saturating_add(1);
+                        wait = backoff(wait, retries);
+                    }
+                },
                 JobState::Failed => {
                     let code = job.error.as_ref().map_or(ErrorCode::Internal, |e| e.code);
                     tracing::info!(job = %t.job_id, ?code, "job failed");
@@ -103,6 +107,11 @@ async fn finish<T: Telegram + 'static, C: Core + 'static>(
 ) {
     app.replace(t.chat_id, Some(t.message_id), text, None).await;
     app.state.remove(&t.job_id);
+}
+
+/// `wait` doubled `n` times (at most 5), capped at a minute.
+fn backoff(wait: Duration, n: u32) -> Duration {
+    (wait * 2u32.saturating_pow(n.min(5))).min(MAX_BACKOFF)
 }
 
 fn running_text(l: Lang, title: &str, job: &Job) -> String {

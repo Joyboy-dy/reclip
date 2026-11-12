@@ -120,6 +120,7 @@ async fn poll_loop_dispatches_and_survives_errors() {
     tokio::time::timeout(std::time::Duration::from_secs(5), run)
         .await
         .unwrap()
+        .unwrap()
         .unwrap();
     settle(&e.app).await;
     assert_eq!(*e.app.tg.offsets.lock().unwrap(), vec![0, 42, 42, 42, 43]);
@@ -127,4 +128,50 @@ async fn poll_loop_dispatches_and_survives_errors() {
         e.app.tg.texts(),
         vec![i18n::welcome(Lang::En), i18n::help(Lang::En)]
     );
+}
+
+fn tg_error(code: u16) -> TgError {
+    TgError {
+        code: Some(code),
+        description: "nope".into(),
+        retry_after: None,
+    }
+}
+
+#[tokio::test]
+async fn rejected_token_stops_the_loop_with_an_error() {
+    let e = env(FakeCore::default());
+    e.app
+        .tg
+        .updates
+        .lock()
+        .unwrap()
+        .push_back(Err(tg_error(401)));
+    let run = tokio::spawn(e.app.clone().run());
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("the loop stops on 401")
+        .unwrap();
+    assert!(ended.is_err());
+}
+
+#[tokio::test]
+async fn conflict_waits_longer_before_polling_again() {
+    let pause = std::time::Duration::from_millis(300);
+    let e = env_with(FakeCore::default(), |s| s.conflict_pause = pause);
+    e.app
+        .tg
+        .updates
+        .lock()
+        .unwrap()
+        .push_back(Err(tg_error(409)));
+    let started = std::time::Instant::now();
+    let run = tokio::spawn(e.app.clone().run());
+    while e.app.tg.offsets.lock().unwrap().len() < 2 {
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(started.elapsed() >= pause, "waited {:?}", started.elapsed());
+    e.app.shutdown.cancel();
+    run.await.unwrap().unwrap();
 }

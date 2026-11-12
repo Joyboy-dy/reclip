@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use reclip_shared::{CreateJobRequest, ErrorCode, MediaFormat, ProbeResponse};
+use reclip_shared::{CreateJobRequest, ErrorCode, JobState, MediaFormat, ProbeResponse};
 
 use crate::app::{App, MAX_CAPTION, MAX_TITLE, cancel_keyboard, clip, core_error_text};
 use crate::choice;
@@ -131,13 +131,9 @@ async fn on_link<T: Telegram + 'static, C: Core + 'static>(
         ]],
     };
     let text = i18n::choose_format(l, &title_line(&choice));
-    if let Some(thumb) = &choice.thumbnail {
+    if let Some(thumb) = choice.thumbnail.as_deref().filter(|u| web_url(u)) {
         let caption = clip(&text, MAX_CAPTION);
-        match app
-            .tg
-            .send_photo_url(chat, thumb, &caption, Some(&kb))
-            .await
-        {
+        match app.photo(chat, thumb, &caption, Some(&kb)).await {
             Ok(_) => {
                 if let Some(s) = status {
                     app.delete(chat, s).await;
@@ -148,6 +144,13 @@ async fn on_link<T: Telegram + 'static, C: Core + 'static>(
         }
     }
     app.replace(chat, status, &text, Some(&kb)).await;
+}
+
+/// Only `http(s)://` addresses go to sendPhoto: the thumbnail comes from
+/// the probed page, and a local Bot API server would also read `file://`.
+fn web_url(u: &str) -> bool {
+    reqwest::Url::parse(u)
+        .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
 }
 
 /// "Title (3:05)".
@@ -244,20 +247,24 @@ pub async fn on_cancel_button<T: Telegram + 'static, C: Core + 'static>(
 }
 
 /// Stops a delivery in progress, or asks the core to cancel the job.
+/// True when something was really stopped (a job that had already ended
+/// on the core is left as it is).
 async fn cancel_one<T: Telegram + 'static, C: Core + 'static>(
     app: &Arc<App<T, C>>,
     t: &Tracked,
-) -> Result<(), CoreError> {
+) -> Result<bool, CoreError> {
     if app.deliveries.abort(&t.job_id) {
         tracing::info!(user = t.user_id, job = %t.job_id, "delivery aborted");
-        return Ok(());
+        return Ok(true);
     }
     let r = app.core.cancel_job(t.user_id, &t.job_id).await;
     match &r {
-        Ok(()) => tracing::info!(user = t.user_id, job = %t.job_id, "cancel requested"),
+        Ok(job) => {
+            tracing::info!(user = t.user_id, job = %t.job_id, state = ?job.state, "cancel requested")
+        }
         Err(e) => tracing::info!(job = %t.job_id, status = e.status, "cancel failed"),
     }
-    r
+    r.map(|job| job.state == JobState::Cancelled)
 }
 
 /// `/cancel`: cancels every job of the user that the bot follows.
@@ -269,7 +276,7 @@ async fn cancel_all<T: Telegram + 'static, C: Core + 'static>(
 ) {
     let mut n = 0;
     for t in app.state.for_user(user) {
-        if cancel_one(app, &t).await.is_ok() {
+        if cancel_one(app, &t).await == Ok(true) {
             n += 1;
         }
     }

@@ -30,6 +30,20 @@ pub struct FakeCore {
     pub link_base: Mutex<Option<String>>,
     /// Id given to the next created job instead of `job<n>`.
     pub next_job_id: Mutex<Option<String>>,
+    /// Errors returned by the next downloads, one per call.
+    pub download_errors: Mutex<VecDeque<CoreError>>,
+    /// Errors returned by the next signed-link requests, one per call.
+    pub link_errors: Mutex<VecDeque<CoreError>>,
+}
+
+/// The core is unreachable (restart, network).
+pub fn unreachable() -> CoreError {
+    CoreError {
+        status: 0,
+        code: ErrorCode::Internal,
+        message: "connection refused".into(),
+        retry_after: None,
+    }
 }
 
 pub fn not_found() -> CoreError {
@@ -111,12 +125,21 @@ impl Core for FakeCore {
     async fn list_jobs(&self, _user: i64) -> Result<Vec<Job>, CoreError> {
         Ok(vec![])
     }
-    async fn cancel_job(&self, user: i64, id: &str) -> Result<(), CoreError> {
+    async fn cancel_job(&self, user: i64, id: &str) -> Result<Job, CoreError> {
         self.owned(user, id)?;
         self.cancelled.lock().unwrap().push((user, id.into()));
         let mut jobs = self.jobs.lock().unwrap();
-        jobs.get_mut(id).unwrap().1 = vec![job(id, JobState::Cancelled, None, None)].into();
-        Ok(())
+        let states = &mut jobs.get_mut(id).unwrap().1;
+        // Like the core: a finished job is returned unchanged.
+        let current = states[0].clone();
+        if matches!(
+            current.state,
+            JobState::Queued | JobState::Downloading | JobState::Processing
+        ) {
+            *states = vec![job(id, JobState::Cancelled, None, None)].into();
+            return Ok(states[0].clone());
+        }
+        Ok(current)
     }
     async fn delete_job(&self, user: i64, id: &str) -> Result<(), CoreError> {
         self.owned(user, id)?;
@@ -136,6 +159,9 @@ impl Core for FakeCore {
     ) -> Result<Option<u64>, CoreError> {
         self.owned(user, id)?;
         self.downloads.lock().unwrap().push(id.into());
+        if let Some(e) = self.download_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
         let n = *self.file_bytes.lock().unwrap();
         if n > max {
             return Ok(None); // the real client stops and removes the part
@@ -148,6 +174,9 @@ impl Core for FakeCore {
     }
     async fn signed_link(&self, user: i64, id: &str) -> Result<LinkResponse, CoreError> {
         self.owned(user, id)?;
+        if let Some(e) = self.link_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
         self.links.lock().unwrap().push(id.into());
         let base = self.link_base.lock().unwrap().clone();
         let base = base.unwrap_or_else(|| "https://reclip.example".into());
