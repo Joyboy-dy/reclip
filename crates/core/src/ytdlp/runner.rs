@@ -154,6 +154,9 @@ pub async fn download_with(
     let Some(path) = pick_output(job_dir, format) else {
         return Err(no_file_error(&out));
     };
+    // The bytes are all in: show processing while the ffmpeg pass runs, even
+    // when yt-dlp printed no postprocessor line (single-file source).
+    on_progress(ProgressEvent::Processing);
     finalize(cfg, &path, opts, &cancel).await?;
     Ok(path)
 }

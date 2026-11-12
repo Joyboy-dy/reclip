@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use reclip_core::config::Config;
 use reclip_core::ytdlp::args::DownloadOptions;
+use reclip_core::ytdlp::progress::ProgressEvent;
 use reclip_core::ytdlp::runner::download_with;
 use reclip_shared::{ApiError, ErrorCode, MediaFormat};
 use tokio_util::sync::CancellationToken;
@@ -140,4 +141,33 @@ async fn fallback_extension_gets_no_faststart() {
         "{argv}"
     );
     assert!(!dir.path().join("media.finalize.webm").exists());
+}
+
+#[tokio::test]
+async fn processing_is_reported_before_the_ffmpeg_pass() {
+    // No yt-dlp postprocessor line for this source: only the runner can say
+    // the job moved on to processing, and it must do so before ffmpeg runs.
+    let dir = tempfile::tempdir().unwrap();
+    let opts = DownloadOptions {
+        strip_metadata: true,
+        ..DownloadOptions::new(MediaFormat::Mp4)
+    };
+    let mut seen = Vec::new();
+    let path = dir.path().to_path_buf();
+    download_with(
+        &fake_ffmpeg(),
+        dir.path(),
+        &opts,
+        "https://webm-only",
+        |e| {
+            if e == ProgressEvent::Processing {
+                seen.push(argv_record(&path).is_none());
+            }
+        },
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(seen, [true]);
+    assert!(argv_record(dir.path()).is_some());
 }
