@@ -5,6 +5,7 @@ import { App } from "./App";
 import { restore } from "./downloads";
 import { loadHistory } from "./history";
 import { store } from "./store";
+import { registerWebMcp } from "./webmcp";
 
 // Must run before the first render so Radix style tags carry the CSP nonce.
 initNonce();
@@ -20,3 +21,5 @@ startBootstrap(getConfig)
   .catch(() => {});
 void restore();
 void loadHistory();
+// Offer the page to browser-integrated agents; does nothing without WebMCP.
+registerWebMcp();

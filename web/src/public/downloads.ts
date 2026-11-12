@@ -35,7 +35,8 @@ const follow = cappedFollower(
  * Only a card that follows the page options reads (and checks) them: one that
  * keeps its own job's options is never blocked by an invalid page clip.
  */
-function optionsFor(c: Card): { opts?: JobOptions; error?: string } {
+function optionsFor(c: Card, override?: JobOptions): { opts?: JobOptions; error?: string } {
+  if (override) return { opts: override };
   const o = store.get().options;
   const format = o.media === "video" ? o.container : o.audio;
   if (!followsPageOptions(c)) return { opts: { format, strip: o.strip } };
@@ -85,11 +86,11 @@ function track(key: string, jobId: string): void {
   stops.set(key, stop);
 }
 
-/** Start (or restart) the download of a card with the page options. */
-export async function download(key: string): Promise<void> {
+/** Start (or restart) the download of a card with the page options, or with `override` (the WebMCP tools). */
+export async function download(key: string, override?: JobOptions): Promise<void> {
   const first = findCard(key);
   if (!first) return;
-  const { opts, error } = optionsFor(first);
+  const { opts, error } = optionsFor(first, override);
   if (!opts) {
     updateCard(key, (c) => {
       c.error = error;
