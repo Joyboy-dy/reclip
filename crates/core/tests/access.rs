@@ -140,9 +140,8 @@ async fn bad_key_401() {
         "Bearer hello".to_string(),
         format!("Bearer {revoked}"),
         format!("Bearer rck_expired1_{secret}"),
-        format!("Basic {valid}"),
-        valid.clone(),
         "Bearer".to_string(),
+        "bearer   ".to_string(),
     ] {
         let r = c
             .get(&url)
@@ -162,6 +161,33 @@ async fn bad_key_401() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
+}
+
+/// Only `Bearer` is a key attempt: Basic credentials a proxy forwards (or a
+/// browser resends) leave the web UI working as a visitor.
+#[tokio::test]
+async fn other_auth_schemes_are_visitors() {
+    let s = TestServer::start(|_| {}).await;
+    let valid = s.key(None).await;
+    let url = format!("{}/api/v1/jobs", s.base);
+    for auth in ["Basic dXNlcjpwYXNz", "Digest username=\"u\"", &valid] {
+        let r = reqwest::Client::new()
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{auth}");
+        assert!(r.headers().contains_key("set-cookie"), "{auth}");
+    }
+    let private = TestServer::start(|c| c.public_web = false).await;
+    let r = reqwest::Client::new()
+        .get(format!("{}/api/v1/jobs", private.base))
+        .header("Authorization", "Basic dXNlcjpwYXNz")
+        .send()
+        .await
+        .unwrap();
+    expect_error(r, 401, "unauthorized").await;
 }
 
 #[tokio::test]

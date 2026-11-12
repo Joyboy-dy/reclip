@@ -140,7 +140,9 @@ async fn resolve(
     fwd: &Forwarded,
 ) -> Result<(Caller, Option<String>), Response> {
     let headers = &parts.headers;
-    if let Some(auth) = headers.get(AUTHORIZATION) {
+    // Other schemes (Basic credentials a proxy forwards or a browser resends)
+    // are not key attempts: they stay visitors.
+    if let Some(auth) = headers.get(AUTHORIZATION).filter(|v| is_bearer_scheme(v)) {
         let invalid = || unauthorized("Invalid or expired API key");
         let token = bearer(auth).ok_or_else(invalid)?;
         let info = match verify_key(&s.store, token).await {
@@ -156,6 +158,14 @@ async fn resolve(
         return Ok((caller, None));
     }
     cookie::visitor_caller(s, parts, fwd).map_err(|r| *r)
+}
+
+/// Whether the credential's scheme is `Bearer` (case-insensitive), whatever
+/// follows it: `Bearer` with a missing or bad token is still a key attempt.
+fn is_bearer_scheme(v: &HeaderValue) -> bool {
+    let raw = v.as_bytes().trim_ascii_start();
+    let scheme = raw.split(|b| b.is_ascii_whitespace()).next();
+    scheme.is_some_and(|s| s.eq_ignore_ascii_case(b"bearer"))
 }
 
 /// The token of `Bearer <token>` (scheme case-insensitive).
@@ -244,6 +254,12 @@ mod tests {
         assert_eq!(bearer(&hv("BEARER abc")), Some("abc"));
         assert_eq!(bearer(&hv("Basic abc")), None);
         assert_eq!(bearer(&hv("Bearer")), None);
+        for yes in ["Bearer", "bearer x", " BEARER\tx", "Bearer  "] {
+            assert!(is_bearer_scheme(&hv(yes)), "{yes}");
+        }
+        for no in ["Basic abc", "Bearerx", "rck_abc_def", "", "Digest a=b"] {
+            assert!(!is_bearer_scheme(&hv(no)), "{no}");
+        }
         assert_eq!(telegram_user(&hv("tg:42")).as_deref(), Some("tg:42"));
         assert_eq!(telegram_user(&hv(" tg:42")), None);
         for bad in ["tg:042", "tg:0", "tg:00"] {
