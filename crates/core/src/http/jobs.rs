@@ -24,6 +24,12 @@ pub async fn create(
     check_target(&req.url, &s.resolver)
         .await
         .map_err(|e| HttpError(e).into_response())?;
+    // The cap check and the insert must not interleave with another create
+    // for the same quota key.
+    let _admission = match caller.limits {
+        Some(l) if l.max_active > 0 => Some(s.admission.lock(&caller.quota_key).await),
+        _ => None,
+    };
     let rate = check_create(&s, &caller).await?;
     let job = s
         .jobs

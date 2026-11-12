@@ -11,6 +11,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::access::caller::caller_layer;
 use crate::access::key_usage::KeyUsage;
 use crate::access::limits::Limiter;
+use crate::access::quota::AdmissionLocks;
 use crate::access::secrets::Site;
 use crate::access::ssrf::{Resolver, system_resolver};
 use crate::config::Config;
@@ -24,6 +25,8 @@ pub struct AppState {
     pub store: Store,
     pub jobs: JobManager,
     pub limiter: Limiter,
+    /// Serializes job admission per quota key (active-jobs cap).
+    pub admission: AdmissionLocks,
     /// Coalesces the `last_used_at` / `request_count` writes of API keys.
     pub key_usage: KeyUsage,
     /// Admin token, link key and public URL.
@@ -40,6 +43,7 @@ impl AppState {
             store,
             jobs,
             limiter: Limiter::new(),
+            admission: AdmissionLocks::default(),
             key_usage: KeyUsage::default(),
             site,
             resolver: system_resolver(),

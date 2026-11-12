@@ -1,11 +1,38 @@
 //! Per-caller quotas applied by the probe and job-creation routes.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use axum::response::{IntoResponse, Response};
+use tokio::sync::OwnedMutexGuard;
 
 use super::caller::Caller;
 use super::limits::{Bucket, Limited, RateInfo};
 use crate::app::AppState;
 use crate::http::internal;
+
+/// Serializes job admission per quota key, so the active-jobs count and the
+/// insertion that follows it cannot interleave between concurrent requests.
+#[derive(Clone, Default)]
+pub struct AdmissionLocks(Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>);
+
+/// Locks kept before idle ones are dropped.
+const ADMISSION_PRUNE_AT: usize = 1024;
+
+impl AdmissionLocks {
+    /// Waits for this quota key's admission lock; hold the guard until the
+    /// job is inserted.
+    pub async fn lock(&self, key: &str) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if map.len() >= ADMISSION_PRUNE_AT {
+                map.retain(|_, l| Arc::strong_count(l) > 1);
+            }
+            map.entry(key.to_string()).or_default().clone()
+        };
+        lock.lock_owned().await
+    }
+}
 
 /// Seconds a client is told to wait when the active-jobs cap refuses.
 const ACTIVE_RETRY_AFTER: u64 = 30;
@@ -21,7 +48,9 @@ pub async fn check_probe(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, L
 }
 
 /// Checks the active-jobs cap, then counts one creation against the hourly
-/// limit. A refusal by the cap does not consume an hourly slot.
+/// limit. A refusal by the cap does not consume an hourly slot. Call it while
+/// holding the caller's [`AdmissionLocks`] guard and keep the guard until the
+/// job is inserted, or concurrent creations can exceed the cap.
 pub async fn check_create(s: &AppState, c: &Caller) -> Result<Option<RateInfo>, Response> {
     let Some(limits) = c.limits else {
         return Ok(None);

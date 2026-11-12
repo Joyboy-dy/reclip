@@ -62,6 +62,9 @@ function track(c: Card, jobId: string): void {
 async function dlCard(key: string): Promise<void> {
   const c = find(key);
   if (!c) return;
+  // The previous job (failed or cancelled) is kept until its replacement
+  // exists: a restored card can only retry through it, so a failed creation
+  // must leave it in place (Retry and Remove still work, a refresh keeps it).
   const previous = c.jobId;
   c.status = "downloading";
   c.error = undefined;
@@ -72,31 +75,44 @@ async function dlCard(key: string): Promise<void> {
   if (previous) {
     stops.get(key)?.();
     stops.delete(key);
-    await deleteJob(previous).catch(() => {});
   }
+  const dropPrevious = () => {
+    if (previous) void deleteJob(previous).catch(() => {});
+  };
   // A rate-limited creation waits and retries a few times; a card removed
   // meanwhile (no longer in `cards`) stops the loop.
   for (let retries = 0; ; retries++) {
     try {
       const job = await createJob(jobRequest(c, getFormat()));
-      if (find(key) !== c) return;
+      dropPrevious();
+      if (find(key) !== c) {
+        void deleteJob(job.id).catch(() => {});
+        return;
+      }
       applyJob(c, job);
       draw(c);
       track(c, job.id);
       return;
     } catch (err) {
-      if (find(key) !== c) return;
+      if (find(key) !== c) {
+        dropPrevious();
+        return;
+      }
       const wait = rateLimitWait(err, retries);
       if (wait === undefined) {
         c.status = "error";
         c.error = errorText(err);
+        c.jobId = previous;
         draw(c);
         return;
       }
       c.waiting = wait;
       draw(c);
       await new Promise((done) => setTimeout(done, wait * 1000));
-      if (find(key) !== c) return;
+      if (find(key) !== c) {
+        dropPrevious();
+        return;
+      }
       c.waiting = undefined;
       draw(c);
     }
