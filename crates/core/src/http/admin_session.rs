@@ -14,9 +14,9 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 use super::{ApiJson, HttpError, api_error, internal};
 use crate::access::admin_auth::{
-    AdminSession, MAX_PASSWORD_CHARS, check_not_blocked, check_origin, forwarded_of, hash_password,
-    new_token, record_failure, secret_eq, session_of, set_cookie, token_hash_of, verify_password,
-    wrong_credentials,
+    AdminSession, MAX_PASSWORD_CHARS, check_origin, forwarded_of, hash_password, new_token,
+    reserve_attempt, secret_eq, session_of, set_cookie, token_hash_of, verify_dummy,
+    verify_password, wrong_credentials,
 };
 use crate::access::caller::error;
 use crate::access::keys::sha256_hex;
@@ -60,31 +60,43 @@ async fn authenticate(s: &AppState, email: &str, password: &str) -> anyhow::Resu
     if !s.cfg.admin_emails.iter().any(|e| e == email)
         || password.chars().count() > MAX_PASSWORD_CHARS
     {
-        return Ok(None);
+        return Ok(verify_dummy(password).await.then_some(false));
     }
-    let stored = s.store.admin_account(email).await?;
+    // Every path below costs exactly one Argon2 run, so timings match.
     if let Some(AdminAccount {
         password_hash: Some(hash),
         must_change,
         ..
-    }) = stored
+    }) = s.store.admin_account(email).await?
     {
         return Ok(verify_password(password, &hash)
             .await
             .then_some(must_change));
     }
     // No password yet: only the configured default opens the account.
-    let Some(default) = s.cfg.admin_default_password.as_ref() else {
-        return Ok(None);
-    };
-    if !secret_eq(password, default.expose()) {
-        return Ok(None);
+    let default_ok = s
+        .cfg
+        .admin_default_password
+        .as_ref()
+        .is_some_and(|d| secret_eq(password, d.expose()));
+    if !default_ok {
+        return Ok(verify_dummy(password).await.then_some(false));
     }
     let hash = hash_password(password).await?;
-    Ok(s.store
-        .init_admin_password(email, &hash)
-        .await?
-        .then_some(true))
+    if s.store.init_admin_password(email, &hash).await? {
+        return Ok(Some(true));
+    }
+    // Another first sign-in won the race: judge against the stored hash.
+    match s.store.admin_account(email).await? {
+        Some(AdminAccount {
+            password_hash: Some(hash),
+            must_change,
+            ..
+        }) => Ok(verify_password(password, &hash)
+            .await
+            .then_some(must_change)),
+        _ => Ok(None),
+    }
 }
 
 async fn login(
@@ -97,17 +109,18 @@ async fn login(
         return *r;
     }
     let email = req.email.trim().to_lowercase();
-    if let Err(limited) = check_not_blocked(&s.limiter, &fwd, &email) {
-        return limited.into_response();
-    }
+    // The slot is taken before any password work: parallel guesses cannot
+    // exceed the limit. A success gives it back; anything else keeps it.
+    let attempt = match reserve_attempt(&s.limiter, &fwd, &email) {
+        Ok(a) => a,
+        Err(limited) => return limited.into_response(),
+    };
     let must_change = match authenticate(&s, &email, &req.password).await {
         Ok(Some(m)) => m,
-        Ok(None) => {
-            record_failure(&s.limiter, &fwd, &email);
-            return wrong_credentials();
-        }
+        Ok(None) => return wrong_credentials(),
         Err(e) => return internal(e).into_response(),
     };
+    attempt.succeeded();
     let Some(token) = new_token() else {
         return internal("no randomness for an admin session").into_response();
     };
@@ -170,9 +183,6 @@ async fn change_password(
         Err(r) => return r,
     };
     let email = session.account.email.clone();
-    if let Err(limited) = check_not_blocked(&s.limiter, &fwd, &email) {
-        return limited.into_response();
-    }
     let len = req.new.chars().count();
     if !(MIN_PASSWORD_CHARS..=MAX_PASSWORD_CHARS).contains(&len) {
         return invalid("The new password must be 12 to 256 characters");
@@ -185,6 +195,10 @@ async fn change_password(
     if is_default {
         return invalid("Choose a password different from the default one");
     }
+    let attempt = match reserve_attempt(&s.limiter, &fwd, &email) {
+        Ok(a) => a,
+        Err(limited) => return limited.into_response(),
+    };
     let current_ok = match &session.account.password_hash {
         Some(hash) if req.current.chars().count() <= MAX_PASSWORD_CHARS => {
             verify_password(&req.current, hash).await
@@ -192,24 +206,20 @@ async fn change_password(
         _ => false,
     };
     if !current_ok {
-        record_failure(&s.limiter, &fwd, &email);
         return invalid("Current password is not correct");
     }
+    attempt.succeeded();
     let hash = match hash_password(&req.new).await {
         Ok(h) => h,
         Err(e) => return internal(e).into_response(),
     };
-    if let Err(e) = s.store.set_admin_password(&email, &hash).await {
+    // A pending first change always ends the other sessions: whoever else
+    // signed in with the default password must not keep access.
+    let sign_out_others = req.sign_out_others || session.account.must_change;
+    let keep = sign_out_others.then_some(session.token_hash.as_str());
+    if let Err(e) = s.store.set_admin_password(&email, &hash, keep).await {
         return internal(e).into_response();
     }
-    if req.sign_out_others
-        && let Err(e) = s
-            .store
-            .delete_other_admin_sessions(&email, &session.token_hash)
-            .await
-    {
-        return internal(e).into_response();
-    }
-    tracing::info!(%email, sign_out_others = req.sign_out_others, "admin password changed");
+    tracing::info!(%email, sign_out_others, "admin password changed");
     me_body(&email, false).into_response()
 }

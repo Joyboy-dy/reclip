@@ -2,6 +2,7 @@
 //! admin routes.
 
 use std::net::SocketAddr;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use argon2::Argon2;
@@ -36,34 +37,53 @@ pub struct AdminSession {
     pub token_hash: String,
 }
 
+fn hash_blocking(password: &str) -> anyhow::Result<String> {
+    let mut raw = [0u8; 16];
+    getrandom::fill(&mut raw).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
+    let salt =
+        SaltString::encode_b64(&raw).map_err(|e| anyhow::anyhow!("salt encoding failed: {e}"))?;
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))
+}
+
 /// Argon2id hash of `password`, computed off the async runtime.
 pub async fn hash_password(password: &str) -> anyhow::Result<String> {
     let password = password.to_owned();
+    tokio::task::spawn_blocking(move || hash_blocking(&password)).await?
+}
+
+/// Spend one Argon2 verification on a fixed dummy hash, so a sign-in that
+/// fails early costs the same as one against a real hash. Always false.
+pub async fn verify_dummy(password: &str) -> bool {
+    static DUMMY: OnceLock<Option<String>> = OnceLock::new();
+    let password = password.to_owned();
     tokio::task::spawn_blocking(move || {
-        let mut raw = [0u8; 16];
-        getrandom::fill(&mut raw).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
-        let salt = SaltString::encode_b64(&raw)
-            .map_err(|e| anyhow::anyhow!("salt encoding failed: {e}"))?;
-        Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
-            .map(|h| h.to_string())
-            .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))
+        match DUMMY.get_or_init(|| hash_blocking("dummy-password-for-timing").ok()) {
+            Some(hash) => verify_blocking(&password, hash),
+            None => false,
+        };
+        false
     })
-    .await?
+    .await
+    .unwrap_or(false)
+}
+
+fn verify_blocking(password: &str, hash: &str) -> bool {
+    PasswordHash::new(hash).is_ok_and(|h| {
+        Argon2::default()
+            .verify_password(password.as_bytes(), &h)
+            .is_ok()
+    })
 }
 
 /// Whether `password` matches the stored `hash` (off the async runtime).
 pub async fn verify_password(password: &str, hash: &str) -> bool {
     let (password, hash) = (password.to_owned(), hash.to_owned());
-    tokio::task::spawn_blocking(move || {
-        PasswordHash::new(&hash).is_ok_and(|h| {
-            Argon2::default()
-                .verify_password(password.as_bytes(), &h)
-                .is_ok()
-        })
-    })
-    .await
-    .unwrap_or(false)
+    tokio::task::spawn_blocking(move || verify_blocking(&password, &hash))
+        .await
+        .unwrap_or(false)
 }
 
 /// Constant-time comparison of two secrets of any length.
@@ -175,16 +195,31 @@ fn ip_key(fwd: &Forwarded) -> String {
     format!("ip:{}", fwd.client_ip)
 }
 
-/// 429 while this IP or email already failed too often.
-pub fn check_not_blocked(l: &Limiter, fwd: &Forwarded, email: &str) -> Result<(), Limited> {
-    l.blocked(Bucket::AdminFail, &ip_key(fwd), MAX_FAILURES)?;
-    l.blocked(Bucket::AdminFail, &email_key(email), MAX_FAILURES)
+/// A slot reserved for one password attempt, per IP and per email. Dropping
+/// it counts the attempt as a failure; [`Attempt::succeeded`] gives it back.
+pub struct Attempt {
+    limiter: Limiter,
+    keys: [String; 2],
 }
 
-/// Count one failed sign-in against the IP and the email.
-pub fn record_failure(l: &Limiter, fwd: &Forwarded, email: &str) {
-    for key in [ip_key(fwd), email_key(email)] {
-        // The refusal itself is reported by `check_not_blocked` next time.
-        let _ = l.check(Bucket::AdminFail, &key, MAX_FAILURES);
+impl Attempt {
+    pub fn succeeded(self) {
+        for key in &self.keys {
+            self.limiter.release(Bucket::AdminFail, key);
+        }
     }
+}
+
+/// Reserve an attempt before any password work (atomic per key), or 429.
+pub fn reserve_attempt(l: &Limiter, fwd: &Forwarded, email: &str) -> Result<Attempt, Limited> {
+    let keys = [ip_key(fwd), email_key(email)];
+    l.check(Bucket::AdminFail, &keys[0], MAX_FAILURES)?;
+    if let Err(e) = l.check(Bucket::AdminFail, &keys[1], MAX_FAILURES) {
+        l.release(Bucket::AdminFail, &keys[0]);
+        return Err(e);
+    }
+    Ok(Attempt {
+        limiter: l.clone(),
+        keys,
+    })
 }

@@ -59,8 +59,15 @@ impl Store {
         Ok(res.rows_affected() == 1)
     }
 
-    /// Replace the password and clear the pending change.
-    pub async fn set_admin_password(&self, email: &str, hash: &str) -> Result<()> {
+    /// Replace the password and clear the pending change. With `keep`, the
+    /// account's other sessions end in the same transaction.
+    pub async fn set_admin_password(
+        &self,
+        email: &str,
+        hash: &str,
+        keep: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query(
             "UPDATE admin_accounts SET password_hash = ?, must_change = 0, updated_at = ? \
              WHERE email = ?",
@@ -68,8 +75,16 @@ impl Store {
         .bind(hash)
         .bind(now())
         .bind(email)
-        .execute(&self.0)
+        .execute(&mut *tx)
         .await?;
+        if let Some(keep) = keep {
+            sqlx::query("DELETE FROM admin_sessions WHERE email = ? AND token_sha256 <> ?")
+                .bind(email)
+                .bind(keep)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -122,16 +137,6 @@ impl Store {
     pub async fn delete_admin_session(&self, token_sha256: &str) -> Result<()> {
         sqlx::query("DELETE FROM admin_sessions WHERE token_sha256 = ?")
             .bind(token_sha256)
-            .execute(&self.0)
-            .await?;
-        Ok(())
-    }
-
-    /// End every session of `email` except `keep`.
-    pub async fn delete_other_admin_sessions(&self, email: &str, keep: &str) -> Result<()> {
-        sqlx::query("DELETE FROM admin_sessions WHERE email = ? AND token_sha256 <> ?")
-            .bind(email)
-            .bind(keep)
             .execute(&self.0)
             .await?;
         Ok(())

@@ -119,26 +119,12 @@ impl Limiter {
         self.check_at(bucket, key, limit, Instant::now())
     }
 
-    /// Whether `key` already used up `limit` in its window, without counting.
-    pub fn blocked(&self, bucket: Bucket, key: &str, limit: u32) -> Result<(), Limited> {
-        let now = Instant::now();
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(w) = inner.windows.get(&(bucket, key.to_string())) else {
-            return Ok(());
-        };
-        if limit == 0 || w.count < limit || now >= w.start + bucket.window() {
-            return Ok(());
+    /// Give back one slot taken by `check` (an attempt that succeeded).
+    pub fn release(&self, bucket: Bucket, key: &str) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(w) = inner.windows.get_mut(&(bucket, key.to_string())) {
+            w.count = w.count.saturating_sub(1);
         }
-        let reset_secs = secs_left(w.start + bucket.window(), now);
-        Err(Limited {
-            info: RateInfo {
-                limit,
-                remaining: 0,
-                reset_secs,
-            },
-            retry_after: reset_secs,
-            message: format!("Too many attempts, try again in {reset_secs} s"),
-        })
     }
 
     pub fn check_at(
