@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::progress_tracker::ProgressTracker;
 use super::{JobManager, internal};
+use crate::ytdlp::args::DownloadOptions;
 use crate::ytdlp::parse::safe_filename;
 use crate::ytdlp::progress::ProgressEvent;
 use crate::ytdlp::runner;
@@ -123,11 +124,17 @@ async fn download(
 
     let mut tracker = ProgressTracker::for_download(job.format, job.format_id.as_deref());
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let download = runner::download(
+    let opts = DownloadOptions {
+        format: job.format,
+        format_id: job.format_id.clone(),
+        clip: job.clip,
+        strip_metadata: job.strip_metadata,
+        playlist_item: store.playlist_item(&job.id).await.map_err(internal)?,
+    };
+    let download = runner::download_with(
         mgr.config(),
         dir,
-        job.format,
-        job.format_id.as_deref(),
+        &opts,
         &job.url,
         move |event| {
             let _ = tx.send(event);

@@ -62,6 +62,20 @@ pub struct Config {
     /// How long a signed download link stays valid.
     pub link_ttl: Duration,
     pub limits: TierLimits,
+    /// yt-dlp `--concurrent-fragments` (at least 1).
+    pub concurrent_fragments: u32,
+    /// yt-dlp `--impersonate` target; `None` disables it.
+    pub impersonate: Option<String>,
+    /// Disk budget for downloaded files, in bytes.
+    pub max_disk: u64,
+    /// Days the download history is kept.
+    pub history_days: u32,
+    /// Lowercase emails allowed to sign in to `/admin`.
+    pub admin_emails: Vec<String>,
+    /// Password of an admin account's first sign-in only.
+    pub admin_default_password: Option<Secret>,
+    /// Lifetime of an admin session cookie.
+    pub admin_session_ttl: Duration,
 }
 
 /// Rate limits for one access tier. 0 means unlimited.
@@ -97,6 +111,26 @@ fn parse_proxies(list: &str) -> Vec<IpNet> {
             }
             net
         })
+        .collect()
+}
+
+/// A byte count with an optional `K`, `M` or `G` suffix (powers of 1024).
+fn parse_size(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    let (digits, shift) = match raw.chars().last()?.to_ascii_uppercase() {
+        'K' => (&raw[..raw.len() - 1], 10),
+        'M' => (&raw[..raw.len() - 1], 20),
+        'G' => (&raw[..raw.len() - 1], 30),
+        _ => (raw, 0),
+    };
+    digits.trim().parse::<u64>().ok()?.checked_mul(1 << shift)
+}
+
+/// Lowercase, trimmed, non-empty entries of a comma-separated list.
+fn parse_emails(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
         .collect()
 }
 
@@ -181,7 +215,7 @@ impl Config {
             telegram_bot_username: get("RECLIP_TELEGRAM_BOT_USERNAME"),
             max_concurrent: slots("RECLIP_MAX_CONCURRENT", 4),
             max_per_site: slots("RECLIP_MAX_PER_SITE", 2),
-            file_ttl: Duration::from_secs(num("RECLIP_FILE_TTL").unwrap_or(86400)),
+            file_ttl: Duration::from_secs(num("RECLIP_FILE_TTL").unwrap_or(21600)),
             cleanup_interval: Duration::from_secs(num("RECLIP_CLEANUP_INTERVAL").unwrap_or(600)),
             trusted_proxies: parse_proxies(
                 &get("RECLIP_TRUSTED_PROXIES").unwrap_or_else(|| DEFAULT_PROXIES.into()),
@@ -195,6 +229,26 @@ impl Config {
                 key: limit("KEY", (120, 200, 100)),
                 tg: limit("TG", (30, 40, 10)),
             },
+            concurrent_fragments: num("RECLIP_CONCURRENT_FRAGMENTS")
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(4)
+                .max(1),
+            // Set but empty means "off"; unset means the default.
+            impersonate: match env("RECLIP_IMPERSONATE").map(|v| v.trim().to_string()) {
+                None => Some("chrome".into()),
+                Some(v) => Some(v).filter(|v| !v.is_empty()),
+            },
+            max_disk: get("RECLIP_MAX_DISK")
+                .and_then(|v| parse_size(&v))
+                .unwrap_or(5 << 30),
+            history_days: num("RECLIP_HISTORY_DAYS")
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(30),
+            admin_emails: get("RECLIP_ADMIN_EMAILS")
+                .map(|l| parse_emails(&l))
+                .unwrap_or_default(),
+            admin_default_password: get("RECLIP_ADMIN_DEFAULT_PASSWORD").map(Secret),
+            admin_session_ttl: Duration::from_secs(12 * 3600),
         }
     }
 }

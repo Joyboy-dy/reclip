@@ -16,11 +16,13 @@ fn generate() -> String {
     let mut out = String::from(HEADER);
     for d in [
         decl::<MediaFormat>(&cfg),
+        decl::<Clip>(&cfg),
         decl::<JobState>(&cfg),
         decl::<ErrorCode>(&cfg),
         decl::<ApiError>(&cfg),
         decl::<FormatOption>(&cfg),
         decl::<VideoInfo>(&cfg),
+        decl::<PlaylistEntry>(&cfg),
         decl::<PlaylistInfo>(&cfg),
         decl::<ProbeResponse>(&cfg),
         decl::<ProbeRequest>(&cfg),
@@ -36,6 +38,14 @@ fn generate() -> String {
         decl::<ApiKeyInfo>(&cfg),
         decl::<CreatedKey>(&cfg),
         decl::<ApiKeyList>(&cfg),
+        decl::<AdminLogin>(&cfg),
+        decl::<AdminMe>(&cfg),
+        decl::<AdminPasswordChange>(&cfg),
+        decl::<HistoryEntry>(&cfg),
+        decl::<HistoryList>(&cfg),
+        decl::<HistoryCleanMode>(&cfg),
+        decl::<HistoryClean>(&cfg),
+        decl::<HistoryCleanResult>(&cfg),
     ] {
         out.push('\n');
         out.push_str(&d);

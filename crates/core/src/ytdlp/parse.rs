@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use reclip_shared::{ApiError, ErrorCode, FormatOption, PlaylistInfo, VideoInfo};
+use reclip_shared::{ApiError, ErrorCode, FormatOption, PlaylistEntry, PlaylistInfo, VideoInfo};
 use serde_json::Value;
 
 /// First JSON object line of `-j` output; noise and later objects are ignored.
@@ -44,6 +44,7 @@ pub fn video_info(v: &Value) -> VideoInfo {
                 id: f["format_id"].as_str()?.to_string(),
                 label: format!("{height}p"),
                 height,
+                codec: None,
             })
         })
         .collect();
@@ -67,9 +68,14 @@ pub fn playlist_info(v: &Value) -> PlaylistInfo {
         title: v["title"].as_str().unwrap_or_default().to_string(),
         entries: entries
             .iter()
-            .filter_map(|e| e["url"].as_str())
-            .filter(|u| !u.is_empty())
-            .map(str::to_string)
+            .filter_map(|e| {
+                let url = e["url"].as_str().filter(|u| !u.is_empty())?;
+                Some(PlaylistEntry {
+                    url: url.to_string(),
+                    title: e["title"].as_str().map(str::to_string),
+                    playlist_item: None,
+                })
+            })
             .collect(),
     }
 }
@@ -129,12 +135,15 @@ mod tests {
 
     #[test]
     fn playlist_entries_keep_non_empty_urls() {
-        let v = json!({"title": "P", "entries": [{"url": "u1"}, {"url": ""}, {"id": "x"}, {"url": "u2"}]});
+        let v = json!({"title": "P", "entries": [{"url": "u1", "title": "T1"}, {"url": ""}, {"id": "x"}, {"url": "u2"}]});
         let p = playlist_info(&v);
-        assert_eq!(
-            (p.title.as_str(), p.entries),
-            ("P", vec!["u1".to_string(), "u2".to_string()])
-        );
+        let got: Vec<_> = p
+            .entries
+            .iter()
+            .map(|e| (e.url.as_str(), e.title.as_deref(), e.playlist_item))
+            .collect();
+        assert_eq!(p.title, "P");
+        assert_eq!(got, [("u1", Some("T1"), None), ("u2", None, None)]);
     }
 
     #[test]

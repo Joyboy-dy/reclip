@@ -42,6 +42,9 @@ fn req(url: &str) -> CreateJobRequest {
         format_id: None,
         title: Some("Fake".into()),
         thumbnail: None,
+        clip: None,
+        strip_metadata: false,
+        playlist_item: None,
     }
 }
 

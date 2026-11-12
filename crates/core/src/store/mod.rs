@@ -4,13 +4,15 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use reclip_shared::api::{Job, JobState};
-use reclip_shared::errors::ApiError;
+use reclip_shared::api::{Clip, Job, JobState};
+use reclip_shared::errors::{ApiError, ErrorCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
+mod admin;
+mod history;
 mod keys;
 mod queries;
 mod settings;
@@ -18,9 +20,14 @@ mod settings;
 mod tests;
 #[cfg(test)]
 mod tests_access;
+mod time;
 
 const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, filename, size, \
-                       error_code, error_message, created_at, expires_at";
+                       error_code, error_message, created_at, expires_at, clip_start, clip_end, \
+                       strip_metadata";
+
+use time::finished_and_expiry;
+pub use time::{now, now_minus, now_plus};
 
 /// Persistent job storage. Cheap to clone (wraps a connection pool).
 #[derive(Clone)]
@@ -47,48 +54,17 @@ pub fn is_terminal(state: JobState) -> bool {
     )
 }
 
-/// Current UTC time as RFC 3339 with millisecond precision and a `Z` suffix.
-///
-/// Timestamps are compared as strings in SQL (`expires_at <= ?`, ordering by
-/// `created_at`), which is only correct when every value is UTC and uses this
-/// exact format. Use this function for every timestamp written to the store.
-pub fn now() -> String {
-    timestamp(chrono::Utc::now())
-}
-
-/// [`now`] plus `d`, in the same format (saturating far in the future).
-pub fn now_plus(d: std::time::Duration) -> String {
-    timestamp(plus(chrono::Utc::now(), d))
-}
-
-/// `at + d`, saturating far in the future.
-fn plus(
-    at: chrono::DateTime<chrono::Utc>,
-    d: std::time::Duration,
-) -> chrono::DateTime<chrono::Utc> {
-    chrono::TimeDelta::from_std(d)
-        .ok()
-        .and_then(|d| at.checked_add_signed(d))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
-}
-
-/// `finished_at` and `expires_at = finished_at + ttl`, from one instant.
-fn finished_and_expiry(ttl: std::time::Duration) -> (String, String) {
-    let at = chrono::Utc::now();
-    (timestamp(at), timestamp(plus(at, ttl)))
-}
-
-/// [`now`] minus `d`, in the same format.
-pub fn now_minus(d: std::time::Duration) -> String {
-    let at = chrono::TimeDelta::from_std(d)
-        .ok()
-        .and_then(|d| chrono::Utc::now().checked_sub_signed(d))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC);
-    timestamp(at)
-}
-
-fn timestamp(at: chrono::DateTime<chrono::Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+/// A cancelled job, or one that failed by interruption or timeout, can be
+/// resumed until it expires.
+fn is_resumable(state: JobState, error: Option<&ApiError>, expires_at: Option<&str>) -> bool {
+    let stopped = match state {
+        JobState::Cancelled => true,
+        JobState::Failed => {
+            error.is_some_and(|e| matches!(e.code, ErrorCode::Interrupted | ErrorCode::Timeout))
+        }
+        _ => false,
+    };
+    stopped && expires_at.is_none_or(|at| at > now().as_str())
 }
 
 fn row_to_job(row: &SqliteRow) -> Result<Job> {
@@ -101,6 +77,17 @@ fn row_to_job(row: &SqliteRow) -> Result<Job> {
         }),
         None => None,
     };
+    let state: JobState = from_wire(&row.try_get::<String, _>("state")?)?;
+    let expires_at: Option<String> = row.try_get("expires_at")?;
+    let clip = row
+        .try_get::<Option<f64>, _>("clip_start")?
+        .map(|start| -> Result<Clip> {
+            Ok(Clip {
+                start,
+                end: row.try_get("clip_end")?,
+            })
+        })
+        .transpose()?;
     Ok(Job {
         id: row.try_get("id")?,
         url: row.try_get("url")?,
@@ -108,15 +95,18 @@ fn row_to_job(row: &SqliteRow) -> Result<Job> {
         format_id: row.try_get("format_id")?,
         title: row.try_get("title")?,
         thumbnail: row.try_get("thumbnail")?,
-        state: from_wire(&row.try_get::<String, _>("state")?)?,
+        state,
         filename: row.try_get("filename")?,
         size: row.try_get::<Option<i64>, _>("size")?.map(|n| n as u64),
+        resumable: is_resumable(state, error.as_ref(), expires_at.as_deref()),
         error,
         progress: None,
         speed: None,
         eta: None,
         created_at: row.try_get("created_at")?,
-        expires_at: row.try_get("expires_at")?,
+        expires_at,
+        clip,
+        strip_metadata: row.try_get("strip_metadata")?,
     })
 }
 
@@ -161,10 +151,22 @@ impl Store {
     /// Insert a job for `owner` (e.g. `web:<hex>`; `""` for legacy rows),
     /// counted against `quota_key` (`""` for none).
     pub async fn insert(&self, job: &Job, owner: &str, quota_key: &str) -> Result<()> {
+        self.insert_item(job, owner, quota_key, None).await
+    }
+
+    /// [`Store::insert`] for one `playlist_item` (1-based) of a multi-video post.
+    pub async fn insert_item(
+        &self,
+        job: &Job,
+        owner: &str,
+        quota_key: &str,
+        playlist_item: Option<u32>,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO jobs (id, url, format, format_id, title, thumbnail, state, \
-             filename, size, error_code, error_message, created_at, expires_at, owner, quota_key) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             filename, size, error_code, error_message, created_at, expires_at, owner, quota_key, \
+             clip_start, clip_end, strip_metadata, playlist_item) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&job.id)
         .bind(&job.url)
@@ -181,9 +183,23 @@ impl Store {
         .bind(&job.expires_at)
         .bind(owner)
         .bind(quota_key)
+        .bind(job.clip.map(|c| c.start))
+        .bind(job.clip.and_then(|c| c.end))
+        .bind(job.strip_metadata)
+        .bind(playlist_item.map(i64::from))
         .execute(&self.0)
         .await?;
         Ok(())
+    }
+
+    /// The 1-based playlist item a job downloads, if any.
+    pub async fn playlist_item(&self, id: &str) -> Result<Option<u32>> {
+        let n: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT playlist_item FROM jobs WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.0)
+                .await?;
+        Ok(n.flatten().and_then(|n| u32::try_from(n).ok()))
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Job>> {

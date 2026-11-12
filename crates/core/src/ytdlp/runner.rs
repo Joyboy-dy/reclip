@@ -9,7 +9,10 @@ use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
-use super::args::{SessionArgs, cookies_available, download_args, probe_args, session_args};
+use super::args::{
+    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, probe_args,
+    session_args,
+};
 use super::errors::classify;
 use super::parse::{parse_first_json, playlist_info, video_info};
 use super::process::{Captured, capture, spawn_group, terminate};
@@ -107,18 +110,27 @@ pub async fn download(
     format: MediaFormat,
     format_id: Option<&str>,
     url: &str,
+    on_progress: impl FnMut(ProgressEvent) + Send,
+    cancel: CancellationToken,
+) -> Result<PathBuf, ApiError> {
+    let opts = DownloadOptions {
+        format_id: format_id.map(str::to_string),
+        ..DownloadOptions::new(format)
+    };
+    download_with(cfg, job_dir, &opts, url, on_progress, cancel).await
+}
+
+/// [`download`] with the full set of options.
+pub async fn download_with(
+    cfg: &Config,
+    job_dir: &Path,
+    opts: &DownloadOptions,
+    url: &str,
     mut on_progress: impl FnMut(ProgressEvent) + Send,
     cancel: CancellationToken,
 ) -> Result<PathBuf, ApiError> {
-    let template = job_dir.join("media.%(ext)s");
-    let args = download_args(
-        &template.to_string_lossy(),
-        format,
-        format_id,
-        &cfg.max_filesize,
-        cfg.max_duration,
-        url,
-    );
+    let args = download_args(job_dir, opts, cfg, url);
+    let format = opts.format;
     let on_line = |line: &str| {
         if let Some(event) = parse_line(line) {
             on_progress(event);
@@ -136,10 +148,7 @@ pub async fn download(
 
 /// Keep the `.mp4` (or `.mp3`) file, else the first file; delete the rest.
 fn pick_output(job_dir: &Path, format: MediaFormat) -> Option<PathBuf> {
-    let want = match format {
-        MediaFormat::Mp4 => "mp4",
-        MediaFormat::Mp3 => "mp3",
-    };
+    let want = format_name(format);
     let mut files: Vec<PathBuf> = std::fs::read_dir(job_dir)
         .ok()?
         .filter_map(Result::ok)

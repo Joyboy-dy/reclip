@@ -57,6 +57,11 @@ pub async fn cancel(
     Ok(Json(s.jobs.cancel(&caller.owner, &id).await?))
 }
 
+/// Pending: 501 until the resume task lands.
+pub async fn resume(caller: Caller, Path(_id): Path<String>) -> Response {
+    super::history::pending(&caller, Scope::JobsCreate)
+}
+
 pub async fn delete_job(
     State(s): State<AppState>,
     caller: Caller,

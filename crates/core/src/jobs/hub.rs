@@ -120,6 +120,9 @@ mod tests {
             eta: None,
             created_at: "2026-11-11T00:00:00.000Z".into(),
             expires_at: None,
+            clip: None,
+            strip_metadata: false,
+            resumable: false,
         }
     }
 

@@ -7,7 +7,37 @@ use crate::errors::ApiError;
 #[serde(rename_all = "lowercase")]
 pub enum MediaFormat {
     Mp4,
+    Mkv,
+    Mov,
     Mp3,
+    M4a,
+    Opus,
+    Flac,
+    Wav,
+}
+
+impl MediaFormat {
+    /// Whether the format is audio only.
+    pub fn is_audio(&self) -> bool {
+        matches!(
+            self,
+            MediaFormat::Mp3
+                | MediaFormat::M4a
+                | MediaFormat::Opus
+                | MediaFormat::Flac
+                | MediaFormat::Wav
+        )
+    }
+}
+
+/// A time range to keep, in seconds.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, TS)]
+pub struct Clip {
+    pub start: f64,
+    /// `None` runs to the end of the media.
+    #[serde(default)]
+    #[ts(optional)]
+    pub end: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, TS)]
@@ -27,6 +57,8 @@ pub struct FormatOption {
     pub id: String,
     pub label: String,
     pub height: u32,
+    /// Video codec when it is not H.264 (e.g. `VP9`); `None` means H.264.
+    pub codec: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -41,8 +73,15 @@ pub struct VideoInfo {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
 pub struct PlaylistInfo {
     pub title: String,
-    /// Entry URLs.
-    pub entries: Vec<String>,
+    pub entries: Vec<PlaylistEntry>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct PlaylistEntry {
+    pub url: String,
+    pub title: Option<String>,
+    /// 1-based position when the entry is one video of a multi-video post.
+    pub playlist_item: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -70,6 +109,16 @@ pub struct CreateJobRequest {
     #[serde(default)]
     #[ts(optional)]
     pub thumbnail: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub clip: Option<Clip>,
+    /// Drop container metadata from the output.
+    #[serde(default)]
+    pub strip_metadata: bool,
+    /// 1-based item of a multi-video post.
+    #[serde(default)]
+    #[ts(optional)]
+    pub playlist_item: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -97,6 +146,10 @@ pub struct Job {
     pub created_at: String,
     /// RFC 3339 timestamp.
     pub expires_at: Option<String>,
+    pub clip: Option<Clip>,
+    pub strip_metadata: bool,
+    /// Whether `POST /jobs/{id}/resume` can continue this job.
+    pub resumable: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
@@ -123,6 +176,11 @@ pub struct PublicConfig {
     /// Longest accepted media, in seconds.
     #[ts(type = "number")]
     pub max_duration: u64,
+    /// How long a finished file stays downloadable, in seconds.
+    #[ts(type = "number")]
+    pub file_ttl_secs: u64,
+    /// Days the download history is kept.
+    pub history_days: u32,
 }
 
 /// A signed, time-limited download link.

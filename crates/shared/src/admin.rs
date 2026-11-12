@@ -89,3 +89,23 @@ pub struct CreatedKey {
 pub struct ApiKeyList {
     pub keys: Vec<ApiKeyInfo>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct AdminLogin {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct AdminMe {
+    pub email: String,
+    pub must_change_password: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]
+pub struct AdminPasswordChange {
+    pub current: String,
+    pub new: String,
+    /// Also end the admin's other sessions.
+    pub sign_out_others: bool,
+}

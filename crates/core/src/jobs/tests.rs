@@ -21,6 +21,9 @@ fn req(url: &str) -> CreateJobRequest {
         format_id: None,
         title: None,
         thumbnail: None,
+        clip: None,
+        strip_metadata: false,
+        playlist_item: None,
     }
 }
 

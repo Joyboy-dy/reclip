@@ -37,6 +37,8 @@ uuid = { version = "1", features = ["v7"] }
 percent-encoding = "2"
 getrandom = "0.3"
 sha2 = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
 hmac = "0.12"
 tower = { version = "0.5", features = ["util"] }
 tokio-util = "0.7"
