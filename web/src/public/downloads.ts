@@ -15,6 +15,7 @@ import {
   isTerminal,
   jobRequest,
 } from "../state";
+import { agentJobIds, rememberAgentJob } from "./agentJobs";
 import { clipFromInput } from "./format";
 import { loadHistory } from "./history";
 import { findCard, store, updateCard } from "./store";
@@ -40,6 +41,8 @@ const follow = cappedFollower(
  */
 function optionsFor(c: Card, override?: JobOptions): { opts?: JobOptions; error?: string } {
   if (override) return { opts: override };
+  // An agent card retried from the page keeps the agent's own options.
+  if (c.autoSave === false && c.format !== undefined) return { opts: { format: c.format, clip: c.clip, strip: c.strip ?? false } };
   const o = store.get().options;
   const format = o.media === "video" ? o.container : o.audio;
   if (!followsPageOptions(c)) return { opts: { format, strip: o.strip } };
@@ -66,6 +69,7 @@ function stopTracking(key: string): void {
 /** Follow a job and mirror its live state into its card. */
 function track(key: string, jobId: string): void {
   stopTracking(key);
+  if (findCard(key)?.autoSave === false) rememberAgentJob(jobId);
   const stop = follow(
     jobId,
     (job: Job) => {
@@ -247,7 +251,10 @@ export async function restore(): Promise<void> {
     return;
   }
   const known = new Set(store.get().cards.map((c) => c.key));
-  const restored = jobs.filter((j) => j.state !== "expired" && !known.has(j.id)).map(cardFromJob);
+  const agent = agentJobIds();
+  const restored = jobs
+    .filter((j) => j.state !== "expired" && !known.has(j.id))
+    .map((j) => (agent.has(j.id) ? { ...cardFromJob(j), autoSave: false } : cardFromJob(j)));
   store.set((s) => ({ cards: [...s.cards, ...restored] }));
   for (const c of restored) if (c.jobId && c.jobState && !isTerminal(c.jobState)) track(c.key, c.jobId);
 }

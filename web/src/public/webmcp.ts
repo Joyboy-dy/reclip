@@ -43,7 +43,7 @@ const fail = (code: string, message: string): ToolResult => ({
   content: [{ type: "text", text: JSON.stringify({ code, message }) }],
 });
 
-/** A download as the agent sees it; `file_url` only once the file is ready. */
+/** A download as the agent sees it; `download_url` (relative) only once the file is ready. */
 function summary(j: Job) {
   return {
     id: j.id,
@@ -55,7 +55,7 @@ function summary(j: Job) {
     speed: j.speed,
     eta: j.eta,
     error: j.error,
-    ...(j.state === "done" ? { file_url: fileUrl(j.id) } : {}),
+    ...(j.state === "done" ? { download_url: fileUrl(j.id) } : {}),
   };
 }
 
@@ -123,6 +123,7 @@ async function cancelDownload(input: Input): Promise<ToolResult> {
   const card = store.get().cards.find((c) => c.jobId === id || c.key === id);
   if (!card) return ok(summary(await cancelJob(id)));
   if (!card.jobId) {
+    if (card.autoSave !== false) throw invalid("Not a download");
     await remove(card.key);
     return ok({ id, state: "cancelled" });
   }
@@ -138,7 +139,7 @@ async function listDownloads(): Promise<ToolResult> {
     .get()
     .cards.filter((c) => !c.jobId && ["loading", "ready", "downloading"].includes(c.status))
     .map(pending);
-  return ok({ downloads: [...waiting, ...jobs] });
+  return ok({ jobs: [...waiting, ...jobs] });
 }
 
 async function getDownload(input: Input): Promise<ToolResult> {
@@ -180,6 +181,11 @@ export const toolDescriptors = (): ToolDescriptor[] =>
 const swallow = (r: unknown) => {
   if (r && typeof (r as Promise<unknown>).catch === "function") (r as Promise<unknown>).catch(() => {});
 };
+
+/** Register after the config bootstrap, and only when the public page is on (else every call would be a 401). */
+export function registerWhenPublic(config: { public_web: boolean }): boolean {
+  return config.public_web ? registerWebMcp() : false;
+}
 
 /** Register the tools when the browser offers WebMCP; never throws. True when at least one tool was registered. */
 export function registerWebMcp(ctx?: ModelContextLike): boolean {

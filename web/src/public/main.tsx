@@ -5,7 +5,7 @@ import { App } from "./App";
 import { restore } from "./downloads";
 import { loadHistory } from "./history";
 import { store } from "./store";
-import { registerWebMcp } from "./webmcp";
+import { registerWhenPublic } from "./webmcp";
 
 // Must run before the first render so Radix style tags carry the CSP nonce.
 initNonce();
@@ -17,9 +17,11 @@ createRoot(root).render(<App />);
 // The config request goes first and alone: its response sets the visitor
 // cookie that every later request (restore, history, downloads) must share.
 startBootstrap(getConfig)
-  .then((config) => store.set({ config }))
+  .then((config) => {
+    store.set({ config });
+    // Offer the page to browser-integrated agents; does nothing without WebMCP.
+    registerWhenPublic(config);
+  })
   .catch(() => {});
 void restore();
 void loadHistory();
-// Offer the page to browser-integrated agents; does nothing without WebMCP.
-registerWebMcp();
