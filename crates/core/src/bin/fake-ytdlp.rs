@@ -14,12 +14,6 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let url = args.last().cloned().unwrap_or_default();
     let flag = |f: &str| args.iter().any(|a| a == f);
-    let value = |f: &str| {
-        args.iter()
-            .position(|a| a == f)
-            .and_then(|i| args.get(i + 1))
-            .cloned()
-    };
     // The media template (yt-dlp also takes `-o "thumbnail:<path>"`).
     let template = args
         .windows(2)
@@ -50,7 +44,7 @@ fn main() {
     }
     #[cfg(unix)]
     if url.contains("spawns-child") {
-        let template = value("-o").expect("-o template");
+        let template = template.clone().expect("-o template");
         let dir = std::path::Path::new(&template).parent().unwrap().to_owned();
         let mut child = std::process::Command::new("sleep")
             .arg("60")
@@ -75,7 +69,7 @@ fn main() {
         return;
     }
     if url.contains("multi-files") {
-        let template = value("-o").unwrap_or_else(|| "media.%(ext)s".into());
+        let template = template.unwrap_or_else(|| "media.%(ext)s".into());
         for ext in ["webm", "m4a", "mp4"] {
             std::fs::write(template.replace("%(ext)s", ext), "fake media").unwrap();
         }

@@ -4,6 +4,8 @@
 // Each test binary uses its own subset of these helpers.
 #![allow(dead_code)]
 
+pub mod partial;
+
 use std::future::Future;
 use std::ops::Deref;
 use std::path::PathBuf;

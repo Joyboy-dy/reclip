@@ -1,13 +1,15 @@
 //! Disk budget (`max_disk`) for the job directories under `downloads_dir`.
 //!
-//! The size is a cached value, recomputed off the runtime threads after each
-//! job, at each cleanup sweep and after evictions. When it is over budget,
-//! `schedule` starts nothing and asks for room: the oldest stopped
+//! The size is a cached value, measured off the runtime threads after each
+//! job, at each cleanup sweep and after a delete; evictions subtract what
+//! they remove. When it is over budget, `schedule` starts nothing and asks
+//! for room: if the files that may go cover the excess, the oldest stopped
 //! downloads' partial files expire first, then the oldest finished files.
-//! If that is not enough, queued jobs wait; the scheduler retries when a job
-//! ends or at the next sweep.
+//! Otherwise nothing is expired and queued jobs wait; the scheduler retries
+//! when a job ends or at the next sweep.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::JobManager;
@@ -15,10 +17,46 @@ use super::recovery::{is_job_dir_name, remove_dir};
 
 #[derive(Default)]
 pub(super) struct Disk {
-    /// Bytes in job directories, as last computed.
-    used: AtomicU64,
+    /// Generation handed to the next measurement or adjustment.
+    next: AtomicU64,
+    /// `(generation, bytes)` of the newest value stored.
+    used: Mutex<(u64, u64)>,
     /// An eviction task is running.
     evicting: AtomicBool,
+}
+
+impl Disk {
+    fn begin(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Store `bytes` measured at generation `generation`, unless a newer value is in.
+    fn store(&self, generation: u64, bytes: u64) {
+        let mut used = self.used.lock().unwrap_or_else(|e| e.into_inner());
+        if generation > used.0 {
+            *used = (generation, bytes);
+        }
+    }
+
+    fn bytes(&self) -> u64 {
+        self.used.lock().unwrap_or_else(|e| e.into_inner()).1
+    }
+
+    /// Take `bytes` off the newest value, as a new generation.
+    fn subtract(&self, bytes: u64) {
+        let generation = self.begin();
+        let mut used = self.used.lock().unwrap_or_else(|e| e.into_inner());
+        *used = (generation, used.1.saturating_sub(bytes));
+    }
+}
+
+/// Clears `evicting` however the eviction task ends.
+struct Evicting<'a>(&'a AtomicBool);
+
+impl Drop for Evicting<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Bytes in the job directories directly below `root` (blocking). Other
@@ -35,6 +73,7 @@ fn job_dirs_size(root: &Path) -> u64 {
         .sum()
 }
 
+/// Size of a file or directory tree; 0 if it does not exist.
 fn tree_size(path: &Path) -> u64 {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return 0;
@@ -52,62 +91,88 @@ fn tree_size(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// The bytes held by each candidate's directory, in order, skipping those
+/// with no directory (blocking).
+fn sized(root: &Path, ids: Vec<String>) -> Vec<(String, PathBuf, u64)> {
+    ids.into_iter()
+        .map(|id| {
+            let dir = root.join(&id);
+            (id, dir)
+        })
+        .filter(|(_, dir)| dir.is_dir())
+        .map(|(id, dir)| {
+            let size = tree_size(&dir);
+            (id, dir, size)
+        })
+        .collect()
+}
+
 impl JobManager {
-    /// Recompute the cached size of the job directories and return it.
+    /// Measure the job directories, cache the size (unless a newer value
+    /// came in meanwhile) and return it.
     pub async fn refresh_disk(&self) -> u64 {
+        let disk = &self.inner.disk;
+        let generation = disk.begin();
         let root = self.config().downloads_dir.clone();
-        let used = tokio::task::spawn_blocking(move || job_dirs_size(&root))
-            .await
-            .unwrap_or_else(|e| {
+        match tokio::task::spawn_blocking(move || job_dirs_size(&root)).await {
+            Ok(bytes) => {
+                disk.store(generation, bytes);
+                bytes
+            }
+            Err(e) => {
                 tracing::warn!(error = %e, "cannot measure the downloads dir");
-                self.inner.disk.used.load(Ordering::Relaxed)
-            });
-        self.inner.disk.used.store(used, Ordering::Relaxed);
-        used
+                disk.bytes()
+            }
+        }
     }
 
     /// Whether the cached size is over `max_disk`.
     pub(super) fn disk_full(&self) -> bool {
-        self.inner.disk.used.load(Ordering::Relaxed) > self.config().max_disk
+        self.inner.disk.bytes() > self.config().max_disk
     }
 
     /// Start freeing space for queued jobs, unless that is already running.
     /// Call it without the scheduler lock.
     pub(super) fn request_room(&self) {
-        let disk = &self.inner.disk;
-        if disk.evicting.swap(true, Ordering::AcqRel) {
+        if self.inner.disk.evicting.swap(true, Ordering::AcqRel) {
             return;
         }
-        let Ok(rt) = tokio::runtime::Handle::try_current() else {
-            disk.evicting.store(false, Ordering::Release);
-            return;
-        };
         let mgr = self.clone();
-        rt.spawn(async move {
-            if let Err(e) = mgr.evict_until_fits().await {
-                tracing::error!(error = %e, "cannot free disk space");
+        let task = async move {
+            {
+                let _guard = Evicting(&mgr.inner.disk.evicting);
+                if let Err(e) = mgr.evict_until_fits().await {
+                    tracing::error!(error = %e, "cannot free disk space");
+                }
             }
-            mgr.inner.disk.evicting.store(false, Ordering::Release);
             // Read after the flag is down, so room made meanwhile is not missed.
             if !mgr.disk_full() {
                 mgr.schedule();
             }
-        });
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => drop(rt.spawn(task)),
+            Err(_) => self.inner.disk.evicting.store(false, Ordering::Release),
+        }
     }
 
     /// Expire finished jobs holding files, in eviction order, until the
-    /// directories fit in `max_disk` or nothing is left to expire.
+    /// directories fit in `max_disk`; nothing if they could not.
     async fn evict_until_fits(&self) -> anyhow::Result<()> {
-        self.refresh_disk().await;
-        if !self.disk_full() {
+        let used = self.refresh_disk().await;
+        let max = self.config().max_disk;
+        if used <= max {
             return Ok(());
         }
-        let root = &self.config().downloads_dir;
-        for id in self.store().eviction_candidates().await? {
-            let dir = root.join(&id);
-            if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
-                continue;
-            }
+        let ids = self.store().eviction_candidates().await?;
+        let root = self.config().downloads_dir.clone();
+        let candidates = tokio::task::spawn_blocking(move || sized(&root, ids)).await?;
+        let evictable: u64 = candidates.iter().map(|(_, _, size)| size).sum();
+        if evictable < used - max {
+            tracing::info!(used, max, evictable, "disk budget exceeded, jobs wait");
+            return Ok(());
+        }
+        for (id, dir, size) in candidates {
             // Checked in the update: a job resumed meanwhile keeps its files.
             if !self.store().expire_now(&id).await? {
                 continue;
@@ -115,11 +180,11 @@ impl JobManager {
             if let Err(e) = remove_dir(&dir).await {
                 tracing::warn!(job = %id, error = %e, "cannot remove evicted job dir");
             }
+            self.inner.disk.subtract(size);
             tracing::info!(job = %id, "expired early to free disk space");
             if let Some(job) = self.store().get(&id).await? {
                 self.hub().publish(job);
             }
-            self.refresh_disk().await;
             if !self.disk_full() {
                 break;
             }
@@ -130,7 +195,7 @@ impl JobManager {
 
 #[cfg(test)]
 mod tests {
-    use super::job_dirs_size;
+    use super::{Disk, job_dirs_size};
 
     #[test]
     fn counts_job_dirs_only() {
@@ -144,5 +209,19 @@ mod tests {
         std::fs::write(root.path().join("stray.txt"), [0u8; 100]).unwrap();
         assert_eq!(job_dirs_size(root.path()), 15);
         assert_eq!(job_dirs_size(&root.path().join("missing")), 0);
+    }
+
+    #[test]
+    fn a_stale_measurement_never_wins() {
+        let disk = Disk::default();
+        let (old, new) = (disk.begin(), disk.begin());
+        disk.store(new, 50);
+        disk.store(old, 90);
+        assert_eq!(disk.bytes(), 50);
+        // An adjustment is newer than a walk that started before it.
+        let walk = disk.begin();
+        disk.subtract(20);
+        disk.store(walk, 50);
+        assert_eq!(disk.bytes(), 30);
     }
 }
