@@ -13,10 +13,12 @@ use super::{Store, from_wire, now};
 /// Most entries the history returns.
 const HISTORY_LIMIT: i64 = 500;
 
-/// Rows the history shows, bound as (owner, since): `done` and `expired`
-/// jobs of the owner, not hidden, created at or after `since`.
-const VISIBLE: &str = "owner = ? AND state IN ('done', 'expired') AND hidden_at IS NULL \
-                       AND created_at >= ?";
+/// Rows the history shows, bound as (owner, since): the owner's `done` jobs
+/// and those that expired after finishing (`filename` is only set by a
+/// `done` outcome and survives expiry), not hidden, created at or after
+/// `since`.
+const VISIBLE: &str = "owner = ? AND state IN ('done', 'expired') AND filename IS NOT NULL \
+                       AND hidden_at IS NULL AND created_at >= ?";
 
 impl Store {
     /// The owner's history since `since`, newest first, each entry with its

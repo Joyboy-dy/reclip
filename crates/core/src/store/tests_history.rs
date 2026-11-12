@@ -19,7 +19,8 @@ fn job(id: &str, state: JobState, code: Option<ErrorCode>) -> Job {
         title: None,
         thumbnail: None,
         state,
-        filename: None,
+        // Like real rows: only a `done` outcome sets it, expiry keeps it.
+        filename: matches!(state, JobState::Done | JobState::Expired).then(|| "f.mp4".into()),
         size: None,
         error: code.map(|code| ApiError {
             code,
@@ -204,4 +205,35 @@ async fn purge_returns_thumbnails() {
         .await
         .unwrap();
     assert_eq!(purged, [Some(PathBuf::from("/t/e.jpg"))]);
+}
+
+#[tokio::test]
+async fn expired_failed_and_cancelled_jobs_stay_out_of_history() {
+    let store = Store::memory().await;
+    let since = now_minus(Duration::from_secs(86400));
+    for id in ["done", "cancelled", "failed"] {
+        store
+            .insert(&job(id, JobState::Queued, None), OWNER, "")
+            .await
+            .unwrap();
+    }
+    let ttl = Duration::from_secs(3600);
+    store
+        .set_finished("done", JobState::Done, Some("a.mp4"), Some(1), None, ttl)
+        .await
+        .unwrap();
+    finish(&store, "cancelled", JobState::Cancelled, None).await;
+    finish(
+        &store,
+        "failed",
+        JobState::Failed,
+        Some(ErrorCode::BotCheck),
+    )
+    .await;
+    for id in ["done", "cancelled", "failed"] {
+        assert!(store.expire_now(id).await.unwrap(), "{id}");
+    }
+    let rows = store.history(OWNER, &since).await.unwrap();
+    let ids: Vec<&str> = rows.iter().map(|(e, _)| e.id.as_str()).collect();
+    assert_eq!(ids, ["done"]);
 }
