@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initNonce } from "@/lib/nonce";
 
-// Must run before the first render so Radix-injected <style> tags carry the CSP nonce.
+// Must run before the first render so Radix style tags carry the CSP nonce.
 initNonce();
 
 // Minimal shell proving the React + Tailwind + shadcn chain; the real admin app lands in a later task.

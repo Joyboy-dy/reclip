@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { getNonce } from "get-nonce";
-import { initNonce, readNonce } from "../src/lib/nonce";
+import { initNonce, readNonce, styleNonce } from "../src/lib/nonce";
 
 const docWith = (content: string | null) =>
   ({
@@ -21,4 +21,9 @@ test("ignores a missing meta, an empty value and the unreplaced placeholder", ()
 test("initNonce hands the nonce to get-nonce", () => {
   expect(initNonce(docWith("n0nce"))).toBe("n0nce");
   expect(getNonce()).toBe("n0nce");
+});
+
+test("styleNonce returns the nonce set by initNonce", () => {
+  initNonce(docWith("viewport-nonce"));
+  expect(styleNonce()).toBe("viewport-nonce");
 });

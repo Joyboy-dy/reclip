@@ -15,7 +15,7 @@ function DialogOverlay({ className, ...props }: ComponentProps<typeof DialogPrim
 function DialogContent({
   className,
   children,
-  showClose = true,
+  showClose = false,
   ...props
 }: ComponentProps<typeof DialogPrimitive.Content> & { showClose?: boolean }) {
   return (

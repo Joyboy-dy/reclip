@@ -1,6 +1,7 @@
 import { Select as SelectPrimitive } from "radix-ui";
 import { Check, ChevronDown } from "lucide-react";
 import type { ComponentProps } from "react";
+import { styleNonce } from "@/lib/nonce";
 import { cn } from "@/lib/utils";
 
 /* Looks: .rc-trigger (+ .wide) and .rc-menu / .rc-menu li */
@@ -52,7 +53,7 @@ function SelectContent({
         )}
         {...props}
       >
-        <SelectPrimitive.Viewport className="max-h-[var(--radix-select-content-available-height)] p-1.5">
+        <SelectPrimitive.Viewport nonce={styleNonce()} className="max-h-[var(--radix-select-content-available-height)] p-1.5">
           {children}
         </SelectPrimitive.Viewport>
       </SelectPrimitive.Content>

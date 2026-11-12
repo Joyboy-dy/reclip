@@ -1,4 +1,4 @@
-import { setNonce } from "get-nonce";
+import { getNonce, setNonce } from "get-nonce";
 
 const PLACEHOLDER = /^\{\{.*\}\}$/;
 
@@ -8,9 +8,14 @@ export function readNonce(doc: Pick<Document, "querySelector">): string | undefi
   return content && !PLACEHOLDER.test(content) ? content : undefined;
 }
 
-/** Hands the nonce to get-nonce so Radix-injected <style> tags carry it. Call before the first React render. */
+/** Hands the nonce to get-nonce so Radix style tags carry it. Call before the first React render. */
 export function initNonce(doc: Pick<Document, "querySelector"> = document): string | undefined {
   const nonce = readNonce(doc);
   if (nonce) setNonce(nonce);
   return nonce;
+}
+
+/** Value for the `nonce` prop of Radix parts that render their own style tag (Select.Viewport, ScrollArea.Viewport). */
+export function styleNonce(): string | undefined {
+  return getNonce() ?? undefined;
 }
