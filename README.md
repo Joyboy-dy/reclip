@@ -53,20 +53,30 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_MAX_DURATION` | Maximum video duration, in seconds. | `10800` |
 | `RECLIP_MAX_CONCURRENT` | Downloads running at once, all sites together (minimum 1). | `4` |
 | `RECLIP_MAX_PER_SITE` | Downloads running at once for one site (minimum 1). | `2` |
-| `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `86400` |
+| `RECLIP_FILE_TTL` | Time a finished file stays downloadable, in seconds. Expired files are deleted. | `21600` |
 | `RECLIP_CLEANUP_INTERVAL` | Period of the expiry sweep, in seconds. | `600` |
 | `RECLIP_TELEGRAM_BOT_USERNAME` | Telegram bot name, without the `@` (later phase). | disabled |
 | `RECLIP_PUBLIC_URL` | Public address behind a reverse proxy, e.g. `https://reclip.example.com`: scheme and host only, no path (otherwise it is ignored with a warning). Used for signed links and the `Origin` check. If unset, it is learned from the first proxied request (signed links only). | none |
 | `RECLIP_TRUSTED_PROXIES` | Comma-separated IPs or CIDR ranges whose `X-Forwarded-*` headers are trusted. | loopback and private ranges |
 | `RECLIP_ADMIN_TOKEN` | Token for the admin API (32 random characters or more). If unset, one is generated at first start and printed once in the logs. | generated |
+| `RECLIP_ADMIN_EMAILS` | Comma-separated lowercase emails allowed to sign in to the admin page (`/admin`). | none |
+| `RECLIP_ADMIN_DEFAULT_PASSWORD` | Initial password of each admin, used only for their first sign-in; they must then choose a new one of 12 characters or more. Remove it after the first sign-in and never commit it. | none |
 | `RECLIP_PUBLIC_WEB` | `false` turns on private mode: the whole API needs a key, except `GET /api/v1/config`. | `true` |
 | `RECLIP_LINK_TTL` | Lifetime of a signed download link, in seconds. | `21600` |
+| `RECLIP_MAX_DISK` | Maximum size of the downloads directory (e.g. `5G`, `500M`, or bytes). When full, the oldest finished files are deleted first. | `5G` |
+| `RECLIP_HISTORY_DAYS` | Days a job title stays in the history, even after its file is deleted. | `30` |
+| `RECLIP_CONCURRENT_FRAGMENTS` | Fragments downloaded in parallel for segmented streams (HLS, DASH). | `4` |
+| `RECLIP_IMPERSONATE` | Browser fingerprint sent to yt-dlp, needed for some sites such as Instagram and TikTok. Empty disables it. | `chrome` |
 | `RECLIP_LIMIT_<TIER>_<LIMIT>` | Rate limits. `TIER` is `WEB`, `KEY` or `TG`; `LIMIT` is `PROBES_PER_MIN`, `JOBS_PER_HOUR` or `ACTIVE`. `0` means unlimited. | see below |
 | `RECLIP_NO_UPDATE` | Container only: skip the yt-dlp update on start. | unset |
 
 Default limits (probes per minute / jobs per hour / active jobs): `WEB` 120 / 300 / 200, `KEY` 120 / 200 / 100, `TG` 30 / 40 / 10. Browser visitors are counted per IP address (per /64 prefix for IPv6). When a download is refused with a `Retry-After` of 120 seconds or less, the web UI waits and retries, up to 3 times.
 
 The downloads directory belongs to ReClip: at startup it deletes the job folders (32 hex characters) it no longer knows, so give it a dedicated folder.
+
+### Admin page
+
+Admins sign in at `/admin`. The page is not linked from the site, so share the address only with admins. Set `RECLIP_ADMIN_EMAILS` and `RECLIP_ADMIN_DEFAULT_PASSWORD`: each admin signs in once with the default password and is then asked to choose their own. The admin token and the `reclip-core keys` CLI keep working for scripts. Details (in French) in [deploy/README.md](deploy/README.md).
 
 ### YouTube on a server
 
