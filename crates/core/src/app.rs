@@ -60,11 +60,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/jobs/{id}/events", get(http::events::events))
         .route("/api/v1/jobs/{id}/cancel", post(http::jobs::cancel))
         .route("/api/v1/jobs/{id}/file", get(http::files::download))
+        .route("/api/v1/jobs/{id}/link", post(http::links::create))
         .route("/api/{*rest}", any(http::api_not_found))
         .layer(middleware::from_fn_with_state(state.clone(), caller_layer));
     // Admin routes carry their own token check, outside `caller_layer`.
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/d/{token}", get(http::links::redeem))
         .merge(http::admin::routes(state.clone()))
         .merge(api)
         .fallback_service(web)

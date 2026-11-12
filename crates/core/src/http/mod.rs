@@ -5,6 +5,7 @@ pub mod config;
 pub mod events;
 pub mod files;
 pub mod jobs;
+pub mod links;
 pub mod probe;
 
 use axum::Json;

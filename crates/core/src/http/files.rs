@@ -2,7 +2,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use reclip_shared::{JobState, Scope};
+use reclip_shared::{Job, JobState, Scope};
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
@@ -54,7 +54,13 @@ pub async fn download(
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),
     };
-    let path = match s.store.file_path(&id).await {
+    serve_job_file(&s, job, req).await
+}
+
+/// Stream a finished job's file (with `Range` support) as an attachment;
+/// 404 when the file is gone from disk.
+pub async fn serve_job_file(s: &AppState, job: Job, req: Request) -> Response {
+    let path = match s.store.file_path(&job.id).await {
         Ok(Some(p)) if p.is_file() => p,
         Ok(_) => return not_found("File not available"),
         Err(e) => return internal(e).into_response(),
