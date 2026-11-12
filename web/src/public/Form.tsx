@@ -130,7 +130,8 @@ function Check({ id, label, checked, onChange, phone }: { id: string; label: str
   return (
     <span className={cn("inline-flex items-center gap-2 text-fg", phone ? "text-[13px]" : "text-xs")}>
       <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} />
-      <label htmlFor={id} className="cursor-pointer">
+      {/* On a phone the label is the 44 px touch target of the small box. */}
+      <label htmlFor={id} className={cn("cursor-pointer", phone && "inline-flex min-h-11 items-center")}>
         {label}
       </label>
     </span>
@@ -154,7 +155,7 @@ export function ClipOptions({ phone }: { phone?: boolean }) {
         aria-invalid={Boolean(error)}
         value={value}
         onChange={(e) => setOptions(key === "clipFrom" ? { clipFrom: e.target.value } : { clipTo: e.target.value })}
-        className={cn(timeInput, phone ? "h-9 w-[60px] p-0" : "w-16 px-2 py-1.5")}
+        className={cn(timeInput, phone ? "h-11 w-[60px] p-0" : "w-16 px-2 py-1.5")}
       />
     </>
   );

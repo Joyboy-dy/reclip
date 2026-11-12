@@ -25,7 +25,7 @@ function CleanUpMenu({ phone }: { phone?: boolean }) {
           className={cn(
             "inline-flex cursor-pointer items-center justify-between gap-2 rounded-lg border-[1.5px] border-line bg-card px-3 font-mono text-xs text-fg outline-none",
             "focus-visible:border-accent data-[state=open]:border-accent data-[state=open]:shadow-focus",
-            phone ? "h-9" : "py-[7px]",
+            phone ? "h-11" : "py-[7px]",
           )}
         >
           Clean up
@@ -75,7 +75,7 @@ function Row({ e }: { e: HistoryEntry }) {
 }
 
 function PhoneRow({ e }: { e: HistoryEntry }) {
-  const icon = "size-10 rounded-lg";
+  const icon = "size-11 rounded-lg";
   return (
     <div data-history-row className="flex min-h-16 items-center gap-3 border-b border-line-soft py-2.5 pr-2 pl-3 last:border-b-0">
       <Thumb src={thumbOf(e)} className="h-9 w-14 rounded-md" />

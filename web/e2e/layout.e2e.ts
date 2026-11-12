@@ -38,3 +38,31 @@ test("phone layout below 560 px, desktop layout above", async ({ page }) => {
   }
   await expect(cards(page)).toHaveCount(0);
 });
+
+test("phone touch targets are at least 44 px tall", async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) > 560, "phone layout only");
+  const tall = async (what: string, locator: ReturnType<typeof page.locator>) => {
+    const box = await locator.first().boundingBox();
+    expect(box?.height ?? 0, what).toBeGreaterThanOrEqual(44);
+  };
+  const card = await fetchUrl(page, "https://93.184.216.34/ok");
+  await tall("quality chip", card.getByRole("group", { name: "Quality" }).getByRole("button"));
+  await tall("download", card.getByRole("button", { name: /^Download/ }));
+  await page.getByRole("checkbox", { name: "Clip" }).click();
+  await tall("clip from", page.getByLabel("From"));
+  await tall("clip to", page.getByLabel("To", { exact: true }));
+  await tall("clip label", page.locator("label[for=clip]"));
+  await page.getByRole("checkbox", { name: "Clip" }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
+  await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
+  await tall("save", card.getByRole("link", { name: "Save" }));
+  await tall("remove", card.getByRole("button", { name: "Remove" }));
+  await tall("clean up", page.getByRole("button", { name: "Clean up" }));
+  const row = page.locator("[data-history-row]").first();
+  await tall("history save", row.getByRole("link", { name: "Save" }));
+  await tall("history remove", row.getByRole("button", { name: "Remove from history" }));
+
+  const slow = await fetchUrl(page, "https://93.184.216.34/slow");
+  await slow.getByRole("button", { name: /^Download/ }).click();
+  await tall("cancel", slow.getByRole("button", { name: "Cancel" }));
+});

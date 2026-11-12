@@ -35,7 +35,7 @@ function DownloadAll({ phone }: { phone?: boolean }) {
       type="button"
       variant="secondary"
       size={phone ? "touch" : "md"}
-      className={phone ? "h-10 w-full rounded-lg" : "w-full"}
+      className={phone ? "h-11 w-full rounded-lg" : "w-full"}
       onClick={() => void downloadAll()}
     >
       Download all ({ready})

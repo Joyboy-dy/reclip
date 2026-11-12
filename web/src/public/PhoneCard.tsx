@@ -11,8 +11,8 @@ import { ClockIcon } from "./icons";
 import { Chips, ProgressBar, Thumb, useTick } from "./parts";
 import { usePage } from "./store";
 
-/** .m-btn: 40 px, 8 px radius. */
-const mBtn = "h-10 rounded-lg px-4 text-xs tracking-[0.04em]";
+/** .m-btn, 8 px radius: 44 px, the smallest phone touch target. */
+const mBtn = "h-11 rounded-lg px-4 text-xs tracking-[0.04em]";
 const status = "flex items-center justify-between gap-3 text-[11px] text-muted";
 const Two = ({ children }: { children: ReactNode }) => <div className="grid grid-cols-2 gap-2">{children}</div>;
 
@@ -66,7 +66,7 @@ function Body({ c }: { c: Card }) {
               value={c.selectedFormat}
               onPick={(id) => pickFormat(c.key, id)}
               className="-mx-3 flex gap-1.5 overflow-x-auto px-3 [scrollbar-width:none]"
-              chipClassName="h-8 flex-none px-3 py-0"
+              chipClassName="h-11 flex-none px-3 py-0"
             />
           )}
           <Button type="button" className={mBtn} onClick={() => void download(c.key)}>
@@ -93,7 +93,7 @@ function Body({ c }: { c: Card }) {
           <div className={status}>
             <span>{formatProgress({ ...c, state: c.jobState })}</span>
             {phase === "running" && (
-              <Button type="button" variant="ghost" className="h-8 rounded-lg px-3 text-xs tracking-[0.04em]" onClick={() => void cancel(c.key)}>
+              <Button type="button" variant="ghost" className="h-11 rounded-lg px-3 text-xs tracking-[0.04em]" onClick={() => void cancel(c.key)}>
                 Cancel
               </Button>
             )}
