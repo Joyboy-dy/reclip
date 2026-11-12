@@ -1,4 +1,4 @@
-import { cancelJob, createJob, deleteJob, fileUrl, listJobs, probe, resumeJob } from "../api/client";
+import { ApiFailure, cancelJob, createJob, deleteJob, fileUrl, listJobs, probe, resumeJob } from "../api/client";
 import type { Job } from "../api/types.gen";
 import { errorText } from "../errors";
 import { cappedFollower } from "../live-slots";
@@ -19,6 +19,9 @@ import { clipFromInput } from "./format";
 import { loadHistory } from "./history";
 import { findCard, store, updateCard } from "./store";
 
+/** The API error code of a failure, when the server sent one. */
+const errorCodeOf = (err: unknown): string | undefined => (err instanceof ApiFailure ? err.code : undefined);
+
 const stops = new Map<string, () => void>();
 let nextKey = 0;
 export const newKey = (): string => `c${nextKey++}`;
@@ -35,7 +38,8 @@ const follow = cappedFollower(
  * Only a card that follows the page options reads (and checks) them: one that
  * keeps its own job's options is never blocked by an invalid page clip.
  */
-function optionsFor(c: Card): { opts?: JobOptions; error?: string } {
+function optionsFor(c: Card, override?: JobOptions): { opts?: JobOptions; error?: string } {
+  if (override) return { opts: override };
   const o = store.get().options;
   const format = o.media === "video" ? o.container : o.audio;
   if (!followsPageOptions(c)) return { opts: { format, strip: o.strip } };
@@ -70,7 +74,7 @@ function track(key: string, jobId: string): void {
       if (isTerminal(job.state)) stops.delete(key);
       const c = findCard(key);
       if (c?.status === "done" && !wasDone) {
-        saveFile(fileUrl(jobId), c.filename);
+        if (c.autoSave !== false) saveFile(fileUrl(jobId), c.filename);
         void loadHistory();
       }
     },
@@ -85,11 +89,11 @@ function track(key: string, jobId: string): void {
   stops.set(key, stop);
 }
 
-/** Start (or restart) the download of a card with the page options. */
-export async function download(key: string): Promise<void> {
+/** Start (or restart) the download of a card with the page options, or with `override` (the WebMCP tools). */
+export async function download(key: string, override?: JobOptions): Promise<void> {
   const first = findCard(key);
   if (!first) return;
-  const { opts, error } = optionsFor(first);
+  const { opts, error } = optionsFor(first, override);
   if (!opts) {
     updateCard(key, (c) => {
       c.error = error;
@@ -127,7 +131,7 @@ export async function download(key: string): Promise<void> {
       const wait = rateLimitWait(err, retries);
       const alive = updateCard(key, (c) => {
         if (wait !== undefined) c.waitUntil = Date.now() + wait * 1000;
-        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined, jobId: previous });
+        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined, jobId: previous, errorCode: errorCodeOf(err) });
       });
       if (!alive) await dropPrevious();
       if (!alive || wait === undefined) return;
@@ -152,11 +156,11 @@ export async function cancel(key: string): Promise<void> {
     const job = await cancelJob(jobId);
     updateCard(key, (c) => {
       applyJob(c, job);
-      c.actionError = undefined;
+      c.actionError = c.actionErrorCode = undefined;
     });
     if (isTerminal(job.state)) stopTracking(key);
   } catch (err) {
-    updateCard(key, (c) => (c.actionError = errorText(err)));
+    updateCard(key, (c) => Object.assign(c, { actionError: errorText(err), actionErrorCode: errorCodeOf(err) }));
   }
 }
 
@@ -222,7 +226,7 @@ async function probeCard(key: string, depth = 0): Promise<void> {
 export async function fetchLinks(urls: string[]): Promise<boolean> {
   if (!urls.length) return false;
   const fresh: Card[] = urls.map((url) => ({ key: newKey(), url, status: "loading" }));
-  store.set((s) => ({ busy: true, cards: [...fresh, ...s.cards.filter((c) => c.jobId || c.status === "downloading")] }));
+  store.set((s) => ({ busy: true, cards: [...fresh, ...s.cards.filter((c) => c.jobId || c.status === "downloading" || (c.autoSave === false && c.status !== "info-error"))] }));
   for (const c of fresh) await probeCard(c.key);
   store.set({ busy: false });
   return store.get().cards.some((c) => c.status === "ready");

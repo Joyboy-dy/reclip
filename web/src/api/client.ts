@@ -8,6 +8,7 @@ import type {
   Job,
   ProbeResponse,
   PublicConfig,
+  Transcript,
 } from "./types.gen";
 
 export class ApiFailure extends Error {
@@ -80,6 +81,8 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
 
 export const getConfig = (): Promise<PublicConfig> => request("/api/v1/config");
 export const probe = (url: string): Promise<ProbeResponse> => postJson("/api/v1/probe", { url });
+export const getTranscript = (url: string, language?: string): Promise<Transcript> =>
+  postJson("/api/v1/transcript", { url, language });
 export const createJob = (req: CreateJobRequest): Promise<Job> => postJson("/api/v1/jobs", req);
 export const getJob = (id: string): Promise<Job> => request(`/api/v1/jobs/${encodeURIComponent(id)}`);
 export const fileUrl = (id: string): string => `/api/v1/jobs/${encodeURIComponent(id)}/file`;

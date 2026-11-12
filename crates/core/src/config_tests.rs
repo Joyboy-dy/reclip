@@ -196,3 +196,18 @@ fn public_url_must_be_a_bare_origin() {
         assert_eq!(public(bad), None, "{bad}");
     }
 }
+
+#[test]
+fn webmcp_trial_token_is_optional() {
+    let token = |v: Option<&str>| {
+        Config::from_env(&|k| {
+            (k == "RECLIP_WEBMCP_TRIAL_TOKEN")
+                .then(|| v.map(str::to_string))
+                .flatten()
+        })
+        .webmcp_trial_token
+    };
+    assert_eq!(token(None), None);
+    assert_eq!(token(Some("  ")), None);
+    assert_eq!(token(Some(" abc= ")).as_deref(), Some("abc="));
+}

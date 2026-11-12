@@ -89,3 +89,46 @@ async fn admin_page_is_404_when_missing() {
     assert_eq!(s.get("/admin/keys").await.status(), 404);
     assert_eq!(s.get("/").await.status(), 200);
 }
+
+/// A server with both pages carrying the WebMCP placeholder.
+async fn with_meta_pages(token: Option<&str>) -> (TestServer, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    for f in ["index.html", "admin.html"] {
+        std::fs::write(dir.path().join(f), "<head>{{WEBMCP_META}}</head>").unwrap();
+    }
+    let web = dir.path().to_path_buf();
+    let token = token.map(str::to_string);
+    let s = TestServer::start(move |c| {
+        c.web_dir = web;
+        c.webmcp_trial_token = token;
+    })
+    .await;
+    (s, dir)
+}
+
+#[tokio::test]
+async fn webmcp_meta_only_with_a_token_and_escaped() {
+    let (s, _d) = with_meta_pages(None).await;
+    for path in ["/", "/admin"] {
+        assert_eq!(s.get(path).await.text().await.unwrap(), "<head></head>");
+    }
+    let (s, _d) = with_meta_pages(Some("tok=en")).await;
+    for path in ["/", "/admin"] {
+        let body = s.get(path).await.text().await.unwrap();
+        assert_eq!(
+            body,
+            "<head><meta http-equiv=\"origin-trial\" content=\"tok=en\"></head>"
+        );
+    }
+    let (s, _d) = with_meta_pages(Some("a\"><script>&")).await;
+    let body = s.get("/").await.text().await.unwrap();
+    assert!(
+        body.contains("content=\"a&quot;&gt;&lt;script&gt;&amp;\""),
+        "{body}"
+    );
+    assert!(!body.contains("<script>"), "{body}");
+    // The token is inserted after the nonce: it is never rewritten.
+    let (s, _d) = with_meta_pages(Some("{{CSP_NONCE}}")).await;
+    let body = s.get("/").await.text().await.unwrap();
+    assert!(body.contains("content=\"{{CSP_NONCE}}\""), "{body}");
+}
