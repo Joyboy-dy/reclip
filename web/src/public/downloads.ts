@@ -1,4 +1,4 @@
-import { cancelJob, createJob, deleteJob, fileUrl, listJobs, probe, resumeJob } from "../api/client";
+import { ApiFailure, cancelJob, createJob, deleteJob, fileUrl, listJobs, probe, resumeJob } from "../api/client";
 import type { Job } from "../api/types.gen";
 import { errorText } from "../errors";
 import { cappedFollower } from "../live-slots";
@@ -18,6 +18,9 @@ import {
 import { clipFromInput } from "./format";
 import { loadHistory } from "./history";
 import { findCard, store, updateCard } from "./store";
+
+/** The API error code of a failure, when the server sent one. */
+const errorCodeOf = (err: unknown): string | undefined => (err instanceof ApiFailure ? err.code : undefined);
 
 const stops = new Map<string, () => void>();
 let nextKey = 0;
@@ -71,7 +74,7 @@ function track(key: string, jobId: string): void {
       if (isTerminal(job.state)) stops.delete(key);
       const c = findCard(key);
       if (c?.status === "done" && !wasDone) {
-        saveFile(fileUrl(jobId), c.filename);
+        if (c.autoSave !== false) saveFile(fileUrl(jobId), c.filename);
         void loadHistory();
       }
     },
@@ -128,7 +131,7 @@ export async function download(key: string, override?: JobOptions): Promise<void
       const wait = rateLimitWait(err, retries);
       const alive = updateCard(key, (c) => {
         if (wait !== undefined) c.waitUntil = Date.now() + wait * 1000;
-        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined, jobId: previous });
+        else Object.assign(c, { status: "error", error: errorText(err), waitUntil: undefined, jobId: previous, errorCode: errorCodeOf(err) });
       });
       if (!alive) await dropPrevious();
       if (!alive || wait === undefined) return;
@@ -153,11 +156,11 @@ export async function cancel(key: string): Promise<void> {
     const job = await cancelJob(jobId);
     updateCard(key, (c) => {
       applyJob(c, job);
-      c.actionError = undefined;
+      c.actionError = c.actionErrorCode = undefined;
     });
     if (isTerminal(job.state)) stopTracking(key);
   } catch (err) {
-    updateCard(key, (c) => (c.actionError = errorText(err)));
+    updateCard(key, (c) => Object.assign(c, { actionError: errorText(err), actionErrorCode: errorCodeOf(err) }));
   }
 }
 
@@ -223,7 +226,7 @@ async function probeCard(key: string, depth = 0): Promise<void> {
 export async function fetchLinks(urls: string[]): Promise<boolean> {
   if (!urls.length) return false;
   const fresh: Card[] = urls.map((url) => ({ key: newKey(), url, status: "loading" }));
-  store.set((s) => ({ busy: true, cards: [...fresh, ...s.cards.filter((c) => c.jobId || c.status === "downloading")] }));
+  store.set((s) => ({ busy: true, cards: [...fresh, ...s.cards.filter((c) => c.jobId || c.status === "downloading" || (c.autoSave === false && c.status !== "info-error"))] }));
   for (const c of fresh) await probeCard(c.key);
   store.set({ busy: false });
   return store.get().cards.some((c) => c.status === "ready");

@@ -52,8 +52,8 @@ async fn page(state: &AppState, file: &str) -> Response {
     let nonce = new_nonce();
     let meta = webmcp_meta(state.cfg.webmcp_trial_token.as_deref());
     let html = html
-        .replace(META_PLACEHOLDER, &meta)
-        .replace(PLACEHOLDER, &nonce);
+        .replace(PLACEHOLDER, &nonce)
+        .replace(META_PLACEHOLDER, &meta);
     let mut res = (StatusCode::OK, html).into_response();
     let h = res.headers_mut();
     h.insert(

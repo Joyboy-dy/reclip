@@ -127,4 +127,8 @@ async fn webmcp_meta_only_with_a_token_and_escaped() {
         "{body}"
     );
     assert!(!body.contains("<script>"), "{body}");
+    // The token is inserted after the nonce: it is never rewritten.
+    let (s, _d) = with_meta_pages(Some("{{CSP_NONCE}}")).await;
+    let body = s.get("/").await.text().await.unwrap();
+    assert!(body.contains("content=\"{{CSP_NONCE}}\""), "{body}");
 }

@@ -44,6 +44,11 @@ export type Card = {
   waitUntil?: number;
   /** Failure of the last Cancel, Resume or Remove request. */
   actionError?: string;
+  actionErrorCode?: string;
+  /** API code of the error of a failed start. */
+  errorCode?: string;
+  /** False for cards started by a browser agent: the file is not saved by the browser. */
+  autoSave?: boolean;
 };
 
 const TERMINAL: JobState[] = ["done", "failed", "cancelled", "expired"];

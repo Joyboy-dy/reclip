@@ -3,14 +3,16 @@
 // visitor: same cookie, same limits, same cards. API shape (webmachinelearning/webmcp):
 // `document.modelContext.registerTool({ name, description, inputSchema, execute })`
 // where `execute(input, options)` returns `{ content: [{ type: "text", text }] }`.
-// `navigator.modelContext` (earlier Chrome builds) is accepted too.
+// `navigator.modelContext` (earlier Chrome builds) is accepted as a fallback.
 import { ApiFailure, cancelJob, fileUrl, getJob, getTranscript, listJobs, probe } from "../api/client";
 import tools from "../api/tools.gen.json";
 import type { Job, MediaFormat } from "../api/types.gen";
 import { errorText } from "../errors";
-import { type JobOptions, isVideo } from "../state";
-import { cancel, download, fetchLinks, pickFormat } from "./downloads";
+import { type Card, type JobOptions, isVideo } from "../state";
+import { AgentInputError, prepareAgentCard } from "./agentCards";
+import { cancel, download, pickFormat, remove } from "./downloads";
 import { findCard, store } from "./store";
+import { type Schema, validate } from "./webmcp-schema";
 
 type Input = Record<string, unknown>;
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -33,6 +35,7 @@ class ToolError extends Error {
     super(message);
   }
 }
+const invalid = (message: string) => new ToolError("invalid_request", message);
 
 const ok = (value: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const fail = (code: string, message: string): ToolResult => ({
@@ -56,82 +59,111 @@ function summary(j: Job) {
   };
 }
 
-function str(input: Input, key: string): string;
-function str(input: Input, key: string, required: false): string | undefined;
-function str(input: Input, key: string, required = true): string | undefined {
-  const v = input[key];
-  if (typeof v === "string" && v.trim()) return v.trim();
-  if (v === undefined && !required) return undefined;
-  throw new ToolError("invalid_request", `"${key}" must be a non-empty string`);
+/** A card with no job yet (probing, ready, or waiting for a rate limit): its key is its id. */
+const pending = (c: Card) => ({
+  id: c.key,
+  url: c.url,
+  state: "pending",
+  status: c.status,
+  title: c.title ?? c.info?.title,
+  error: c.error,
+});
+
+const text = (input: Input, key: string): string => (input[key] as string).trim();
+const optional = (input: Input, key: string): string | undefined => (input[key] === undefined ? undefined : text(input, key));
+
+/** Options of start_download, already schema-checked. */
+function jobOptions(input: Input): JobOptions {
+  const format = (optional(input, "format") ?? "mp4") as MediaFormat;
+  const clip = input.clip as { start: number; end?: number } | undefined;
+  if (clip && clip.end !== undefined && clip.end <= clip.start) throw invalid('"clip.end" must be greater than "clip.start"');
+  if (input.quality !== undefined && !isVideo(format)) throw invalid('"quality" only applies to video formats');
+  return { format, strip: input.strip_metadata === true, clip: clip && { start: clip.start, end: clip.end } };
 }
 
-function jobOptions(input: Input): JobOptions {
-  const format = (str(input, "format", false) ?? "mp4") as MediaFormat;
-  const clip = input.clip as { start?: unknown; end?: unknown } | undefined;
-  if (clip !== undefined && (typeof clip?.start !== "number" || clip.start < 0)) {
-    throw new ToolError("invalid_request", '"clip.start" must be a number of seconds');
-  }
-  return {
-    format,
-    strip: input.strip_metadata === true,
-    clip: clip && { start: clip.start as number, end: typeof clip.end === "number" ? clip.end : undefined },
+/** Resolves once the download of a card has a job, failed, or waits for a rate limit. */
+function settled(key: string): Promise<void> {
+  const done = () => {
+    const c = findCard(key);
+    return !c || c.jobId !== undefined || c.status === "error" || c.waitUntil !== undefined;
   };
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!done()) return;
+      unsubscribe();
+      resolve();
+    };
+    const unsubscribe = store.subscribe(check);
+    check();
+  });
 }
 
 async function startDownload(input: Input): Promise<ToolResult> {
-  const url = str(input, "url");
   const opts = jobOptions(input);
-  const item = input.playlist_item;
-  const known = new Set(store.get().cards.map((c) => c.key));
-  // Same path as the Fetch button: a visible card is probed, then downloaded.
-  await fetchLinks([url]);
-  const fresh = store.get().cards.filter((c) => !known.has(c.key));
-  const failed = fresh.find((c) => c.status === "info-error");
-  const ready = fresh.filter((c) => c.status === "ready");
-  const card = typeof item === "number" ? ready.find((c) => c.playlistItem === item) : ready[0];
-  if (!card) {
-    throw new ToolError("invalid_request", failed?.error ?? "No downloadable video found at this link");
+  const quality = optional(input, "quality");
+  const url = text(input, "url");
+  const key = await prepareAgentCard(url, input.playlist_item as number | undefined);
+  const formats = findCard(key)?.info?.formats;
+  if (quality && formats && !formats.some((f) => f.id === quality)) {
+    await remove(key);
+    throw invalid(`Unknown quality "${quality}"; use a format id from probe_media`);
   }
-  if (typeof item !== "number" && ready.length > 1) {
-    const items = ready.map((c) => c.playlistItem ?? c.url).join(", ");
-    throw new ToolError("invalid_request", `Several videos at this link; pass playlist_item (${items})`);
-  }
-  const quality = str(input, "quality", false);
-  if (quality && isVideo(opts.format)) {
-    if (!card.info?.formats.some((f) => f.id === quality)) {
-      throw new ToolError("invalid_request", `Unknown quality "${quality}"; use a format id from probe_media`);
-    }
-    pickFormat(card.key, quality);
-  }
-  await download(card.key, opts);
-  const done = findCard(card.key);
-  if (!done?.jobId) throw new ToolError("internal", done?.error ?? "The download could not be started");
-  return ok({ id: done.jobId, state: done.jobState ?? "queued", url, title: done.title ?? done.info?.title });
+  if (quality) pickFormat(key, quality);
+  void download(key, opts);
+  await settled(key);
+  const c = findCard(key);
+  if (!c) throw new ToolError("internal", "The download was removed");
+  if (c.status === "error") throw new ToolError(c.errorCode ?? "internal", c.error ?? "The download could not be started");
+  if (c.jobId) return ok({ id: c.jobId, state: c.jobState ?? "queued", url, title: c.title ?? c.info?.title });
+  return ok({ id: key, state: "waiting", url, message: "Rate limited: the download starts by itself when the limit lifts", retry_at: c.waitUntil });
 }
 
 async function cancelDownload(input: Input): Promise<ToolResult> {
-  const id = str(input, "id");
-  const card = store.get().cards.find((c) => c.jobId === id);
+  const id = text(input, "id");
+  const card = store.get().cards.find((c) => c.jobId === id || c.key === id);
   if (!card) return ok(summary(await cancelJob(id)));
+  if (!card.jobId) {
+    await remove(card.key);
+    return ok({ id, state: "cancelled" });
+  }
   await cancel(card.key);
   const after = findCard(card.key);
-  if (after?.actionError) throw new ToolError("internal", after.actionError);
+  if (after?.actionError) throw new ToolError(after.actionErrorCode ?? "internal", after.actionError);
   return ok({ id, state: after?.jobState ?? "cancelled" });
 }
 
+async function listDownloads(): Promise<ToolResult> {
+  const jobs = (await listJobs()).map(summary);
+  const waiting = store
+    .get()
+    .cards.filter((c) => !c.jobId && ["loading", "ready", "downloading"].includes(c.status))
+    .map(pending);
+  return ok({ downloads: [...waiting, ...jobs] });
+}
+
+async function getDownload(input: Input): Promise<ToolResult> {
+  const id = text(input, "id");
+  const card = findCard(id);
+  if (card && !card.jobId) return ok(pending(card));
+  return ok(summary(await getJob(card?.jobId ?? id)));
+}
+
 const handlers: Record<string, (input: Input) => Promise<ToolResult>> = {
-  probe_media: async (i) => ok(await probe(str(i, "url"))),
+  probe_media: async (i) => ok(await probe(text(i, "url"))),
   start_download: startDownload,
-  list_downloads: async () => ok({ downloads: (await listJobs()).map(summary) }),
-  get_download: async (i) => ok(summary(await getJob(str(i, "id")))),
+  list_downloads: listDownloads,
+  get_download: getDownload,
   cancel_download: cancelDownload,
-  get_transcript: async (i) => ok(await getTranscript(str(i, "url"), str(i, "language", false))),
+  get_transcript: async (i) => ok(await getTranscript(text(i, "url"), optional(i, "language"))),
 };
 
-async function run(name: string, input: Input): Promise<ToolResult> {
+async function run(name: string, schema: Schema, input: unknown): Promise<ToolResult> {
   try {
-    return await handlers[name](input ?? {});
+    const problem = validate(input ?? {}, schema);
+    if (problem) throw invalid(problem);
+    return await handlers[name]((input ?? {}) as Input);
   } catch (err) {
+    if (err instanceof AgentInputError) return fail("invalid_request", err.message);
     if (err instanceof ToolError || err instanceof ApiFailure) return fail(err.code, err.message);
     return fail("internal", errorText(err));
   }
@@ -142,26 +174,38 @@ export const toolDescriptors = (): ToolDescriptor[] =>
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
-    execute: (input) => run(t.name, input),
+    execute: (input) => run(t.name, t.inputSchema as unknown as Schema, input),
   }));
 
-/** Register the tools when the browser offers WebMCP; never throws. */
+const swallow = (r: unknown) => {
+  if (r && typeof (r as Promise<unknown>).catch === "function") (r as Promise<unknown>).catch(() => {});
+};
+
+/** Register the tools when the browser offers WebMCP; never throws. True when at least one tool was registered. */
 export function registerWebMcp(ctx?: ModelContextLike): boolean {
   try {
     const g = globalThis as { navigator?: { modelContext?: ModelContextLike }; document?: { modelContext?: ModelContextLike } };
-    const mc = ctx ?? g.navigator?.modelContext ?? g.document?.modelContext;
+    const mc = ctx ?? g.document?.modelContext ?? g.navigator?.modelContext;
     if (!mc) return false;
     const list = toolDescriptors();
-    const swallow = (r: unknown) => {
-      if (r && typeof (r as Promise<unknown>).catch === "function") (r as Promise<unknown>).catch(() => {});
-    };
     if (typeof mc.registerTool === "function") {
-      for (const t of list) swallow(mc.registerTool(t));
-    } else if (typeof mc.provideContext === "function") {
+      let registered = 0;
+      for (const t of list) {
+        try {
+          swallow(mc.registerTool(t));
+          registered++;
+        } catch {
+          // one tool failing must not hide the others
+        }
+      }
+      return registered > 0;
+    }
+    if (typeof mc.provideContext === "function") {
       swallow(mc.provideContext({ tools: list }));
-    } else return false;
-    return true;
+      return true;
+    }
   } catch {
-    return false;
+    // WebMCP is optional: never break the page
   }
+  return false;
 }
