@@ -96,7 +96,7 @@ Pour Claude Desktop ou un autre client, ajoutez un connecteur distant (personnal
 
 Les six outils (`probe_media`, `start_download`, `list_downloads`, `get_download`, `cancel_download`, `get_transcript`) sont aussi exposés par WebMCP sur la page publique, quand le navigateur gère l'API (Chrome, derrière un drapeau ou un origin trial). WebMCP n'utilise aucune clé : il agit avec le cookie du visiteur et ses limites. Les téléchargements lancés par un agent apparaissent sous forme de cartes sur la page, et le navigateur ne les enregistre pas automatiquement.
 
-`RECLIP_WEBMCP_TRIAL_TOKEN` (vide par défaut) : quand il est défini, chaque page HTML porte la balise `<meta http-equiv="origin-trial">` avec ce jeton. Il est fourni par le fournisseur du navigateur pour l'origin trial. Vide, la page fonctionne comme avant, sans WebMCP.
+`RECLIP_WEBMCP_TRIAL_TOKEN` (vide par défaut) : quand il est défini, chaque page HTML porte la balise `<meta http-equiv="origin-trial">` avec ce jeton. Il est fourni par le fournisseur du navigateur pour l'origin trial. Vide, aucune balise n'est ajoutée : WebMCP reste disponible dans les navigateurs où l'API est activée par un drapeau.
 
 ## Jeton admin
 
