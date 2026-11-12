@@ -33,7 +33,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * A first-time visitor gets its `reclip_client` cookie from the first API
+ * response. Concurrent first requests would each mint a different cookie, and
+ * the last one to land would orphan jobs created under another. So every
+ * request waits for one bootstrap request (`getConfig` at startup) first.
+ */
+let bootstrap: Promise<unknown> = Promise.resolve();
+
+/** Run `first` alone, then let every other request through. */
+export function startBootstrap<T>(first: () => Promise<T>): Promise<T> {
+  const pending = first();
+  bootstrap = pending.catch(() => {});
+  return pending;
+}
+
 async function send(path: string, init?: RequestInit): Promise<Response> {
+  await bootstrap;
+  return sendNow(path, init);
+}
+
+async function sendNow(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { credentials: "same-origin", ...init });
   if (!res.ok) {
     let code: ErrorCode = "internal";

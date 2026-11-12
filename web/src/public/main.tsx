@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { getConfig } from "../api/client";
+import { getConfig, startBootstrap } from "../api/client";
 import { initNonce } from "@/lib/nonce";
 import { App } from "./App";
 import { restore } from "./downloads";
@@ -13,8 +13,10 @@ const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 createRoot(root).render(<App />);
 
-void restore();
-void loadHistory();
-getConfig()
+// The config request goes first and alone: its response sets the visitor
+// cookie that every later request (restore, history, downloads) must share.
+startBootstrap(getConfig)
   .then((config) => store.set({ config }))
   .catch(() => {});
+void restore();
+void loadHistory();
