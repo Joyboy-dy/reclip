@@ -63,7 +63,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_ADMIN_DEFAULT_PASSWORD` | Initial password of each admin, used only for their first sign-in; they must then choose a new one of 12 characters or more. Remove it after the first sign-in and never commit it. | none |
 | `RECLIP_PUBLIC_WEB` | `false` turns on private mode: the whole API needs a key, except `GET /api/v1/config`. | `true` |
 | `RECLIP_LINK_TTL` | Lifetime of a signed download link, in seconds. | `21600` |
-| `RECLIP_MAX_DISK` | Maximum size of the downloads directory (e.g. `5G`, `500M`, or bytes). When full, the oldest finished files are deleted first. | `5G` |
+| `RECLIP_MAX_DISK` | Maximum size of the downloads directory (e.g. `5G`, `500M`, or bytes). When full, the oldest finished files are deleted first. The cap is soft: downloads in progress and the final ffmpeg copy can exceed it briefly. | `5G` |
 | `RECLIP_HISTORY_DAYS` | Days a job title stays in the history, even after its file is deleted. | `30` |
 | `RECLIP_CONCURRENT_FRAGMENTS` | Fragments downloaded in parallel for segmented streams (HLS, DASH). | `4` |
 | `RECLIP_IMPERSONATE` | Browser fingerprint sent to yt-dlp, needed for some sites such as Instagram and TikTok. Empty disables it. | `chrome` |

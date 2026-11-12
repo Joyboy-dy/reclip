@@ -67,7 +67,7 @@ Dans l'interface, chaque tâche affiche sa progression en direct et peut être a
 ## Stockage
 
 - Durée de vie d'un fichier terminé : `RECLIP_FILE_TTL` secondes (défaut `21600`, soit 6 h). Un nettoyage passe toutes les `RECLIP_CLEANUP_INTERVAL` secondes (défaut `600`).
-- Taille maximale du dossier des téléchargements : `RECLIP_MAX_DISK` (défaut `5G`). Les valeurs acceptent les suffixes `K`, `M` et `G`, ou un nombre d'octets. Quand la limite est atteinte, les fichiers terminés les plus anciens sont supprimés en premier.
+- Taille maximale du dossier des téléchargements : `RECLIP_MAX_DISK` (défaut `5G`). Les valeurs acceptent les suffixes `K`, `M` et `G`, ou un nombre d'octets. Quand la limite est atteinte, les fichiers terminés les plus anciens sont supprimés en premier. La limite est souple : les téléchargements en cours et la copie finale par ffmpeg peuvent la dépasser brièvement.
 - Historique : les titres restent affichés pendant `RECLIP_HISTORY_DAYS` jours (défaut `30`), même après la suppression du fichier.
 
 Le volume `data` grossit au maximum jusqu'à `RECLIP_MAX_DISK`, plus la base SQLite et les fichiers en cours de téléchargement. Si l'hôte a peu d'espace, baissez `RECLIP_MAX_DISK` ou `RECLIP_FILE_TTL`.
