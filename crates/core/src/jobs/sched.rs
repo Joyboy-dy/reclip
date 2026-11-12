@@ -26,12 +26,14 @@ pub(super) struct Sched {
     waiting: HashMap<String, Job>,
     running: HashMap<String, Slot>,
     per_site: HashMap<String, usize>,
+    max_concurrent: usize,
     stopping: bool,
 }
 
 impl Sched {
     pub(super) fn new(cfg: &Config) -> Sched {
         Sched {
+            max_concurrent: cfg.max_concurrent,
             queue: Queue::new(cfg.max_concurrent, cfg.max_per_site),
             waiting: HashMap::new(),
             running: HashMap::new(),
@@ -129,13 +131,27 @@ impl JobManager {
         }
     }
 
-    /// Start every queued job the limits allow.
+    /// The `finished` token of a running job.
+    pub(super) fn running_finished(&self, id: &str) -> Option<CancellationToken> {
+        self.sched()
+            .running
+            .get(id)
+            .map(|slot| slot.finished.clone())
+    }
+
+    /// Start every queued job the limits allow. Over the disk budget nothing
+    /// starts and room is requested instead (see [`super::disk`]).
     pub(super) fn schedule(&self) {
+        let full = self.disk_full();
+        let mut need_room = false;
         let starts = {
             let mut guard = self.sched();
             let s = &mut *guard;
             let mut starts = Vec::new();
-            while !s.stopping {
+            if full && !s.stopping && !s.queue.is_empty() && s.running.len() < s.max_concurrent {
+                need_room = true;
+            }
+            while !s.stopping && !full {
                 let Some(id) = s.queue.next(s.running.len(), &s.per_site) else {
                     break;
                 };
@@ -155,6 +171,9 @@ impl JobManager {
             }
             starts
         };
+        if need_room {
+            self.request_room();
+        }
         // Outside a runtime (process teardown) nothing can start anyway.
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;

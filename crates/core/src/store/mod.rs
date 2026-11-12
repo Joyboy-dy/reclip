@@ -21,6 +21,8 @@ mod settings;
 mod tests;
 #[cfg(test)]
 mod tests_access;
+#[cfg(test)]
+mod tests_history;
 mod time;
 
 const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, filename, size, \
@@ -57,7 +59,7 @@ pub fn is_terminal(state: JobState) -> bool {
 
 /// A cancelled job, or one that failed by interruption or timeout, can be
 /// resumed until it expires.
-fn is_resumable(state: JobState, error: Option<&ApiError>, expires_at: Option<&str>) -> bool {
+pub fn is_resumable(state: JobState, error: Option<&ApiError>, expires_at: Option<&str>) -> bool {
     let stopped = match state {
         JobState::Cancelled => true,
         JobState::Failed => {

@@ -398,12 +398,13 @@ async fn expire_due_and_purge() {
     );
 
     let finished = store.finished_at("old").await.unwrap();
-    assert_eq!(store.purge_expired(&finished).await.unwrap(), 0);
+    assert!(store.purge_expired(&finished).await.unwrap().is_empty());
     assert_eq!(
         store
             .purge_expired("9999-01-01T00:00:00.000Z")
             .await
-            .unwrap(),
+            .unwrap()
+            .len(),
         1
     );
     assert_eq!(store.get("old").await.unwrap(), None);
@@ -521,7 +522,8 @@ async fn expire_due_covers_failed_and_cancelled() {
         store
             .purge_expired("9999-01-01T00:00:00.000Z")
             .await
-            .unwrap(),
+            .unwrap()
+            .len(),
         2
     );
     assert_eq!(store.get("f").await.unwrap(), None);

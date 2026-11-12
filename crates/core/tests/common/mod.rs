@@ -38,7 +38,9 @@ pub struct TestServer {
     pub jobs: JobManager,
     pub downloads: PathBuf,
     pub visitor: Visitor,
-    _dirs: (tempfile::TempDir, tempfile::TempDir),
+    /// `data_dir` (thumbnails live in `thumbs/`).
+    pub data: PathBuf,
+    _dirs: (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir),
 }
 
 impl Deref for TestServer {
@@ -75,15 +77,18 @@ impl TestServer {
     ) -> (TestServer, JoinHandle<std::io::Result<()>>) {
         let downloads = tempfile::tempdir().unwrap();
         let web = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
         std::fs::write(web.path().join("index.html"), "<h1>ReClip</h1>").unwrap();
         let mut cfg = Config::from_env(&|_| None);
         cfg.ytdlp_bin = env!("CARGO_BIN_EXE_fake-ytdlp").to_string();
         cfg.downloads_dir = downloads.path().to_path_buf();
         cfg.web_dir = web.path().to_path_buf();
+        cfg.data_dir = data.path().to_path_buf();
         cfg.job_timeout = Duration::from_secs(60);
         cfg.admin_token = Some(Secret::new(ADMIN_TOKEN));
         tweak(&mut cfg);
         let downloads_dir = cfg.downloads_dir.clone();
+        let data_dir = cfg.data_dir.clone();
         let store = Store::memory().await;
         let site = Site::load(&cfg, &store).await.unwrap();
         let mut state = AppState::new(Arc::new(cfg), store.clone(), site.clone());
@@ -99,7 +104,8 @@ impl TestServer {
             site,
             jobs,
             downloads: downloads_dir,
-            _dirs: (downloads, web),
+            data: data_dir,
+            _dirs: (downloads, web, data),
         };
         (s, server)
     }

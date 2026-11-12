@@ -156,15 +156,22 @@ pub async fn download_with(
     Ok(path)
 }
 
+/// The media is a file that is neither the `thumb.jpg` thumbnail (kept for
+/// the job) nor a leftover `*.part`.
+fn is_media(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    path.is_file() && name != THUMB_NAME && !name.ends_with(".part")
+}
+
 /// Keep the `media.<ext>` file (preferring the requested extension), else the
-/// first file; delete the rest except the `thumb.jpg` thumbnail.
+/// first media file; delete the other media files.
 fn pick_output(job_dir: &Path, format: MediaFormat) -> Option<PathBuf> {
     let want = format_name(format);
     let mut files: Vec<PathBuf> = std::fs::read_dir(job_dir)
         .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.file_name().is_some_and(|n| n != THUMB_NAME))
+        .filter(|p| is_media(p))
         .collect();
     files.sort();
     let keep = files

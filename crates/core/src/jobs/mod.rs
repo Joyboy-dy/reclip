@@ -2,16 +2,20 @@
 //!
 //! Scheduling state (queue, running slots, per-site counters) sits behind a
 //! `std::sync::Mutex` that is never held across an `.await`. Scheduling runs
-//! on create, when a worker finishes and when a queued job is cancelled.
+//! on create and resume, when a worker finishes, when a queued job is
+//! cancelled or a job deleted, after a cleanup sweep and after disk evictions
+//! (see `disk.rs`).
 //! Running downloads are only ever stopped through their `CancellationToken`,
 //! and callers that need the worker gone await its `finished` token: dropping
 //! a download future would orphan yt-dlp's children.
 
 pub mod cleanup;
+mod disk;
 pub mod hub;
 pub mod progress_tracker;
 pub mod queue;
 pub mod recovery;
+mod resume;
 mod sched;
 #[cfg(test)]
 mod tests;
@@ -27,6 +31,7 @@ use sched::{Sched, Tracked};
 
 pub use hub::Hub;
 pub use queue::{Queue, site_of};
+pub use resume::not_resumable;
 pub use sched::JobCounts;
 
 use crate::config::Config;
@@ -69,6 +74,7 @@ struct Inner {
     store: Store,
     hub: Hub,
     sched: Mutex<Sched>,
+    disk: disk::Disk,
     /// Cancelled by `shutdown`, for background loops.
     shutdown: CancellationToken,
 }
@@ -83,6 +89,7 @@ impl JobManager {
     pub fn new(cfg: Arc<Config>, store: Store) -> JobManager {
         let inner = Inner {
             sched: Mutex::new(Sched::new(&cfg)),
+            disk: disk::Disk::default(),
             cfg,
             store,
             hub: Hub::new(),
@@ -215,6 +222,11 @@ impl JobManager {
                     .map_err(internal)?;
                 let job = Job {
                     state: JobState::Cancelled,
+                    resumable: crate::store::is_resumable(
+                        JobState::Cancelled,
+                        None,
+                        Some(&expires_at),
+                    ),
                     expires_at: Some(expires_at),
                     ..stored
                 };
@@ -253,8 +265,13 @@ impl JobManager {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(internal(e).into()),
             _ => {}
         }
-        self.store().delete(id).await.map_err(internal)?;
+        let thumb = self.store().delete(id).await.map_err(internal)?;
         self.hub().forget(id);
+        if let Some(thumb) = thumb {
+            recovery::remove_file(&thumb).await;
+        }
+        self.refresh_disk().await;
+        self.schedule();
         Ok(())
     }
 }

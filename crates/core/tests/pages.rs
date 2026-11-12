@@ -89,25 +89,3 @@ async fn admin_page_is_404_when_missing() {
     assert_eq!(s.get("/admin/keys").await.status(), 404);
     assert_eq!(s.get("/").await.status(), 200);
 }
-
-#[tokio::test]
-async fn pending_routes_answer_501() {
-    let s = TestServer::start(|_| {}).await;
-    for (method, path) in [
-        ("POST", "/api/v1/jobs/abc/resume"),
-        ("GET", "/api/v1/history"),
-        ("DELETE", "/api/v1/history/abc"),
-        ("POST", "/api/v1/history/clean"),
-        ("GET", "/api/v1/history/abc/thumb"),
-    ] {
-        let r = match method {
-            "GET" => s.get(path).await,
-            "DELETE" => s.delete(path).await,
-            _ => s.post(path, serde_json::json!({})).await,
-        };
-        assert_eq!(r.status(), 501, "{method} {path}");
-        let b: Value = r.json().await.unwrap();
-        assert_eq!(b["code"], "internal", "{path}");
-        assert_eq!(b["message"], "Not implemented yet", "{path}");
-    }
-}

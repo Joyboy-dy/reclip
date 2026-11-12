@@ -46,12 +46,14 @@ impl Store {
             .await?)
     }
 
-    pub async fn delete(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM jobs WHERE id = ?")
-            .bind(id)
-            .execute(&self.0)
-            .await?;
-        Ok(())
+    /// Delete a job row. Returns its thumbnail, for the caller to remove.
+    pub async fn delete(&self, id: &str) -> Result<Option<PathBuf>> {
+        let thumb: Option<Option<String>> =
+            sqlx::query_scalar("DELETE FROM jobs WHERE id = ? RETURNING thumb_path")
+                .bind(id)
+                .fetch_optional(&self.0)
+                .await?;
+        Ok(thumb.flatten().map(PathBuf::from))
     }
 
     /// Queued jobs with their owner, in creation order.
@@ -67,13 +69,18 @@ impl Store {
             .collect()
     }
 
-    /// Ids of every `done` job.
-    pub async fn done_ids(&self) -> Result<Vec<String>> {
-        Ok(
-            sqlx::query_scalar("SELECT id FROM jobs WHERE state = 'done'")
-                .fetch_all(&self.0)
-                .await?,
+    /// Ids of every job whose files are kept: `done` jobs and stopped
+    /// downloads that can be resumed (`cancelled`, `failed` by interruption
+    /// or timeout). Expiry is left to the sweep.
+    pub async fn kept_ids(&self) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM jobs WHERE state IN ('done', 'cancelled') \
+             OR (state = 'failed' AND error_code IN (?, ?))",
         )
+        .bind(to_wire(&ErrorCode::Interrupted)?)
+        .bind(to_wire(&ErrorCode::Timeout)?)
+        .fetch_all(&self.0)
+        .await?)
     }
 
     /// Fail every `downloading`/`processing` job (server restart recovery),
@@ -134,12 +141,59 @@ impl Store {
             .collect())
     }
 
-    /// Delete `expired` rows whose `finished_at` is before `before`.
-    pub async fn purge_expired(&self, before: &str) -> Result<u64> {
-        let res = sqlx::query("DELETE FROM jobs WHERE state = 'expired' AND finished_at < ?")
-            .bind(before)
-            .execute(&self.0)
-            .await?;
-        Ok(res.rows_affected())
+    /// Delete `expired` rows whose `finished_at` is before `before`. Returns
+    /// one entry per deleted row: its thumbnail, for the caller to remove.
+    pub async fn purge_expired(&self, before: &str) -> Result<Vec<Option<PathBuf>>> {
+        let thumbs: Vec<Option<String>> = sqlx::query_scalar(
+            "DELETE FROM jobs WHERE state = 'expired' AND finished_at < ? RETURNING thumb_path",
+        )
+        .bind(before)
+        .fetch_all(&self.0)
+        .await?;
+        Ok(thumbs.into_iter().map(|t| t.map(PathBuf::from)).collect())
+    }
+
+    /// Put a resumable job (see [`super::is_resumable`]) back to `queued`,
+    /// clearing its outcome. `false` if it is not resumable (any more).
+    pub async fn requeue(&self, id: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE jobs SET state = 'queued', error_code = NULL, error_message = NULL, \
+             filename = NULL, size = NULL, file_path = NULL, finished_at = NULL, \
+             expires_at = NULL \
+             WHERE id = ? AND (state = 'cancelled' OR (state = 'failed' AND error_code IN (?, ?))) \
+             AND (expires_at IS NULL OR expires_at > ?)",
+        )
+        .bind(id)
+        .bind(to_wire(&ErrorCode::Interrupted)?)
+        .bind(to_wire(&ErrorCode::Timeout)?)
+        .bind(now())
+        .execute(&self.0)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Finished jobs that may still hold files, in eviction order: stopped
+    /// downloads (`cancelled`, `failed`) first, then `done`, oldest first.
+    pub async fn eviction_candidates(&self) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM jobs WHERE state IN ('cancelled', 'failed', 'done') \
+             ORDER BY state = 'done', finished_at, id",
+        )
+        .fetch_all(&self.0)
+        .await?)
+    }
+
+    /// Expire one finished job now, like [`Store::expire_due`] would.
+    /// `false` if it is no longer `done`, `failed` or `cancelled`.
+    pub async fn expire_now(&self, id: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE jobs SET state = 'expired', file_path = NULL, finished_at = ? \
+             WHERE id = ? AND state IN ('done', 'failed', 'cancelled')",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(&self.0)
+        .await?;
+        Ok(res.rows_affected() == 1)
     }
 }

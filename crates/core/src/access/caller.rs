@@ -128,9 +128,17 @@ pub async fn caller_layer(State(s): State<AppState>, req: Request, next: Next) -
             res
         }
     };
-    // Responses are per caller: never let a shared cache keep them.
-    res.headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    // Responses are per caller: never let a shared cache keep them. A
+    // handler may still let the caller's own browser cache (`private, ...`).
+    let private = res
+        .headers()
+        .get(CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("private"));
+    if !private {
+        res.headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     res
 }
 

@@ -136,7 +136,9 @@ async fn cancel_running_job() {
     assert_eq!(job.state, JobState::Cancelled);
     assert_eq!(job.error, None);
     assert_eq!(e.stored_state(&a).await, JobState::Cancelled);
-    assert!(!e.job_dir(&a).exists());
+    assert!(job.resumable);
+    // Kept for a resume (removed by delete or expiry).
+    assert!(e.job_dir(&a).exists());
     // Cancelling again is a no-op returning the same state.
     let again = e.mgr.cancel(OWNER, &a).await.unwrap();
     assert_eq!(again.state, JobState::Cancelled);

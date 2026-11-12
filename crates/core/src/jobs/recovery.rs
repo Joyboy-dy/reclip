@@ -12,8 +12,8 @@ pub struct RecoveryReport {
     pub interrupted: usize,
     /// Queued jobs put back in the queue.
     pub requeued: usize,
-    /// Job-shaped directories in `downloads_dir` matching no `queued`/`done`
-    /// job.
+    /// Job-shaped directories in `downloads_dir` matching no job whose
+    /// files are kept.
     pub orphan_dirs: usize,
 }
 
@@ -25,15 +25,24 @@ pub(super) async fn remove_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Remove a file; a missing one is fine, other failures are logged.
+pub(super) async fn remove_file(path: &Path) {
+    if let Err(e) = tokio::fs::remove_file(path).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(path = %path.display(), error = %e, "cannot remove file");
+    }
+}
+
 /// Bring the store and `downloads_dir` back to a consistent state. Run it
 /// before the server listens and before any `create`.
 ///
-/// Order: fail running jobs and delete their directories, requeue `queued`
-/// jobs (owner and `format_id` kept), then delete every direct child
-/// directory of `downloads_dir` that is named like a job (see
-/// [`is_job_dir_name`]) but is not a `queued` or `done` job. The keep-set is
-/// computed before requeueing, so a worker that already started on a
-/// requeued job never loses its directory. Symlinks are not followed, plain
+/// Order: fail running jobs (their directories are kept: an interrupted
+/// download can be resumed), delete every direct child directory of
+/// `downloads_dir` that is named like a job (see [`is_job_dir_name`]) but
+/// whose files are not kept (a `queued`, `done` or resumable job), measure
+/// the disk use, then requeue `queued` jobs (owner and options kept). No
+/// worker runs before the orphans are gone. Symlinks are not followed, plain
 /// files and directories with any other name are left alone:
 /// `RECLIP_DOWNLOADS_DIR` may point at a folder that holds other things.
 pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
@@ -41,21 +50,17 @@ pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
     let root = &manager.config().downloads_dir;
 
     let interrupted = store.mark_interrupted(manager.config().file_ttl).await?;
-    for id in &interrupted {
-        if let Err(e) = remove_dir(&root.join(id)).await {
-            tracing::warn!(job = %id, error = %e, "cannot remove interrupted job dir");
-        }
-    }
 
     let queued = store.queued().await?;
-    let mut keep: HashSet<String> = store.done_ids().await?.into_iter().collect();
+    let mut keep: HashSet<String> = store.kept_ids().await?.into_iter().collect();
     keep.extend(queued.iter().map(|(job, _)| job.id.clone()));
+    let orphan_dirs = remove_orphans(root, &keep).await?;
+    manager.refresh_disk().await;
+
     let requeued = queued.len();
     for (job, owner) in queued {
         manager.enqueue(job, &owner);
     }
-
-    let orphan_dirs = remove_orphans(root, &keep).await?;
     Ok(RecoveryReport {
         interrupted: interrupted.len(),
         requeued,
@@ -64,7 +69,7 @@ pub async fn recover(manager: &JobManager) -> anyhow::Result<RecoveryReport> {
 }
 
 /// A job id: 32 lowercase hex characters (a simple-format UUID).
-fn is_job_dir_name(name: &str) -> bool {
+pub(super) fn is_job_dir_name(name: &str) -> bool {
     name.len() == 32 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 

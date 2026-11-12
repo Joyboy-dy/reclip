@@ -20,6 +20,11 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
+    // The media template (yt-dlp also takes `-o "thumbnail:<path>"`).
+    let template = args
+        .windows(2)
+        .find(|w| w[0] == "-o" && !w[1].starts_with("thumbnail:"))
+        .map(|w| w[1].clone());
 
     if url.contains("error-bot") {
         eprintln!("ERROR: [youtube] x: Sign in to confirm you're not a bot.");
@@ -37,6 +42,10 @@ fn main() {
             );
             std::thread::sleep(Duration::from_millis(100));
         }
+        return;
+    }
+    if url.contains("partial") && !flag("-j") && !flag("-J") {
+        partial(&template.expect("-o template"));
         return;
     }
     #[cfg(unix)]
@@ -103,7 +112,7 @@ fn main() {
         );
         return;
     }
-    if let Some(template) = value("-o") {
+    if let Some(template) = template {
         // Record the arguments so tests can assert on them.
         // Next to the job dir (`<id>.args.txt`), which the runner would clean.
         if let Some(dir) = std::path::Path::new(&template).parent() {
@@ -123,6 +132,32 @@ fn main() {
         };
         let path = template.replace("%(ext)s", ext);
         println!("{post}\"{path}\"");
-        std::fs::write(path, "fake media").unwrap();
+        std::fs::write(&path, "fake media").unwrap();
+        if url.contains("thumb") {
+            let dir = std::path::Path::new(&path).parent().unwrap();
+            std::fs::write(dir.join("thumb.jpg"), "fake jpeg").unwrap();
+        }
+    }
+}
+
+/// A download that leaves `media.mp4.part` and runs until stopped. Started
+/// again with that `.part` present, it finishes from it (like yt-dlp's
+/// default `--continue`); the media says how many bytes it resumed after.
+fn partial(template: &str) {
+    let media = template.replace("%(ext)s", "mp4");
+    let part = format!("{media}.part");
+    if let Ok(prior) = std::fs::read(&part) {
+        progress("1000", "1000", "NA", "NA", "NA");
+        std::fs::write(&media, format!("resumed after {} bytes", prior.len())).unwrap();
+        std::fs::remove_file(&part).unwrap();
+        println!("[Merger] Merging formats into \"{media}\"");
+        return;
+    }
+    let dir = std::path::Path::new(&media).parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(&part, "partial").unwrap();
+    for i in 1..300u32 {
+        progress(&i.to_string(), "1000", "NA", "1000.0", "NA");
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
