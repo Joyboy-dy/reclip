@@ -1,6 +1,6 @@
 import { ApiFailure } from "./api/client";
 import { jobError } from "./errors";
-import type { Job, JobState, MediaFormat, ProbeResponse, VideoInfo } from "./api/types.gen";
+import type { CreateJobRequest, Job, JobState, MediaFormat, ProbeResponse, VideoInfo } from "./api/types.gen";
 
 export type Card = {
   /** Stable identity (job id for restored cards, generated otherwise); never an array index. */
@@ -49,9 +49,27 @@ export function applyJob(c: Card, job: Job): void {
 
 /** Build a card from a job alone (page refresh). */
 export function cardFromJob(job: Job): Card {
-  const c: Card = { key: job.id, url: job.url, status: "downloading" };
+  const c: Card = { key: job.id, url: job.url, status: "downloading", selectedFormat: job.format_id ?? undefined };
   applyJob(c, job);
   return c;
+}
+
+/** A card can be (re)started from its probe result or, once restored, from its job. */
+export const canRetry = (c: Card): boolean => Boolean(c.info || c.jobId);
+
+/**
+ * The request that (re)starts a card. A probed card follows the format toggle;
+ * a restored one (no probe result) keeps the format and quality of its job.
+ */
+export function jobRequest(c: Card, toggle: MediaFormat): CreateJobRequest {
+  const format = c.info ? toggle : (c.format ?? toggle);
+  return {
+    url: c.url,
+    format,
+    format_id: format === "mp4" ? c.selectedFormat ?? undefined : undefined,
+    title: c.info?.title ?? c.title,
+    thumbnail: c.info?.thumbnail || c.thumbnail || undefined,
+  };
 }
 
 /** Replace every playlist URL by the entries the server lists for it. */

@@ -216,7 +216,12 @@ impl JobManager {
                 finished.cancelled().await;
                 self.owned(owner, id).await
             }
-            Tracked::Untracked => Ok(self.hub().snapshot(id).unwrap_or(stored)),
+            // The worker may have finished since `stored` was read: re-read
+            // rather than return a pre-completion row.
+            Tracked::Untracked => match self.hub().snapshot(id) {
+                Some(live) => Ok(live),
+                None => self.owned(owner, id).await,
+            },
         }
     }
 

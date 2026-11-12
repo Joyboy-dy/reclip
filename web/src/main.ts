@@ -3,7 +3,7 @@ import type { Job } from "./api/types.gen";
 import { errorText } from "./errors";
 import { cappedFollower } from "./live-slots";
 import { followJob, pollFollow } from "./progress";
-import { type Card, applyJob, cardFromJob, expandPlaylists, isTerminal } from "./state";
+import { type Card, applyJob, cardFromJob, expandPlaylists, isTerminal, jobRequest } from "./state";
 import { type CardActions, removeCardEl, renderCard, renderDownloadAll } from "./ui/card";
 import { renderTelegramLink } from "./ui/footer";
 import { setupFormatToggle } from "./ui/format-toggle";
@@ -73,15 +73,8 @@ async function dlCard(key: string): Promise<void> {
     stops.delete(key);
     await deleteJob(previous).catch(() => {});
   }
-  const format = getFormat();
   try {
-    const job = await createJob({
-      url: c.url,
-      format,
-      format_id: format === "mp4" ? c.selectedFormat ?? undefined : undefined,
-      title: c.info?.title,
-      thumbnail: c.info?.thumbnail || undefined,
-    });
+    const job = await createJob(jobRequest(c, getFormat()));
     if (!find(key)) return;
     applyJob(c, job);
     draw(c);
