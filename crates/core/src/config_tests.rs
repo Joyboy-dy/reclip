@@ -211,3 +211,13 @@ fn webmcp_trial_token_is_optional() {
     assert_eq!(token(Some("  ")), None);
     assert_eq!(token(Some(" abc= ")).as_deref(), Some("abc="));
 }
+
+#[test]
+fn bot_key_file_is_off_by_default() {
+    assert_eq!(Config::from_env(&|_| None).bot_key_file, None);
+    let c =
+        Config::from_env(&|k| (k == "RECLIP_BOT_KEY_FILE").then(|| "/run/reclip/bot.key".into()));
+    assert_eq!(c.bot_key_file, Some(PathBuf::from("/run/reclip/bot.key")));
+    let c = Config::from_env(&|k| (k == "RECLIP_BOT_KEY_FILE").then(|| "  ".into()));
+    assert_eq!(c.bot_key_file, None);
+}
