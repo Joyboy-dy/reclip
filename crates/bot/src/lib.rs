@@ -12,6 +12,7 @@ pub mod limits;
 pub mod link;
 pub mod pending;
 pub mod router;
+pub mod send;
 pub mod state;
 pub mod telegram;
 pub mod tracker;

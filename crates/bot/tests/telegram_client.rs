@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use reclip_bot::telegram::{
     ChatKind, HttpTelegram, InlineKeyboardButton, InlineKeyboardMarkup, Telegram,
 };
@@ -112,42 +110,20 @@ async fn message_not_modified_is_success() {
 }
 
 #[tokio::test]
-async fn rate_limit_waits_then_retries_once() {
-    let (server, tg) = setup().await;
-    Mock::given(method("POST"))
-        .and(path(api("editMessageText")))
-        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
-            "ok": false, "error_code": 429, "description": "Too Many Requests: retry after 1",
-            "parameters": {"retry_after": 1}
-        })))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(api("editMessageText")))
-        .respond_with(ok(json!(true)))
-        .mount(&server)
-        .await;
-    let t = Instant::now();
-    tg.edit_message(5, 42, "50 %", None).await.unwrap();
-    assert!(t.elapsed().as_millis() >= 900, "waited for retry_after");
-    assert_eq!(server.received_requests().await.unwrap().len(), 2);
-}
-
-#[tokio::test]
-async fn persistent_rate_limit_gives_up_after_one_retry() {
+async fn rate_limit_goes_back_to_the_caller() {
+    // One attempt: the bot paces the chat and retries (see chat_pacing.rs).
     let (server, tg) = setup().await;
     Mock::given(method("POST"))
         .and(path(api("sendMessage")))
         .respond_with(ResponseTemplate::new(429).set_body_json(json!({
             "ok": false, "error_code": 429, "description": "Too Many Requests",
-            "parameters": {"retry_after": 1}
+            "parameters": {"retry_after": 7}
         })))
         .mount(&server)
         .await;
     let err = tg.send_message(5, "x", None).await.unwrap_err();
-    assert_eq!(err.code, Some(429));
-    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    assert_eq!((err.code, err.retry_after), (Some(429), Some(7)));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -248,7 +224,7 @@ async fn send_video_and_audio_are_multipart() {
 }
 
 #[tokio::test]
-async fn upload_is_retried_after_429_with_a_fresh_form() {
+async fn upload_429_goes_back_to_the_caller() {
     let (server, tg) = setup().await;
     Mock::given(method("POST"))
         .and(path(api("sendVideo")))
@@ -256,23 +232,19 @@ async fn upload_is_retried_after_429_with_a_fresh_form() {
             "ok": false, "error_code": 429, "description": "slow down",
             "parameters": {"retry_after": 1}
         })))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(api("sendVideo")))
-        .respond_with(ok(json!({"message_id": 1})))
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
     let video = dir.path().join("clip.mp4");
     std::fs::write(&video, b"VIDEO-BYTES").unwrap();
-    tg.send_video(5, &video, "", None, None, None)
+    let err = tg
+        .send_video(5, &video, "", None, None, None)
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(err.code, Some(429));
     let reqs = server.received_requests().await.unwrap();
-    assert_eq!(reqs.len(), 2);
-    assert!(String::from_utf8_lossy(&reqs[1].body).contains("VIDEO-BYTES"));
+    assert_eq!(reqs.len(), 1);
+    assert!(String::from_utf8_lossy(&reqs[0].body).contains("VIDEO-BYTES"));
 }
 
 #[tokio::test]

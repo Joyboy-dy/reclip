@@ -14,7 +14,7 @@ use crate::i18n::{self, Lang};
 use crate::limits::{ChatGate, Deliveries};
 use crate::pending::Pending;
 use crate::state::{StateStore, Tracked};
-use crate::telegram::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, Telegram};
+use crate::telegram::{InlineKeyboardButton, InlineKeyboardMarkup, Telegram};
 use crate::{router, tracker};
 
 /// Telegram limits, in UTF-16 code units.
@@ -37,15 +37,16 @@ pub struct Settings {
     pub choice_ttl: Duration,
     /// Pause after a failed `getUpdates` without `retry_after`.
     pub error_pause: Duration,
+    /// Pause after a `getUpdates` conflict (409: webhook or second poller).
+    pub conflict_pause: Duration,
     /// `getUpdates` long-poll timeout, in seconds.
     pub long_poll_secs: u64,
-    /// Smallest gap between two progress edits in one chat.
+    /// Smallest gap between two sends or edits in one chat.
     pub edit_gap: Duration,
     /// Deliveries running at once.
     pub max_deliveries: usize,
-    /// Upload attempts when Telegram answers 429 (on top of the client's
-    /// own single retry).
-    pub upload_attempts: u32,
+    /// Attempts of a send, edit or upload when Telegram answers 429.
+    pub send_attempts: u32,
 }
 
 impl Settings {
@@ -57,10 +58,11 @@ impl Settings {
             poll_interval: Duration::from_secs(3),
             choice_ttl: Duration::from_secs(30 * 60),
             error_pause: Duration::from_secs(5),
+            conflict_pause: Duration::from_secs(30),
             long_poll_secs: 50,
             edit_gap: Duration::from_millis(1100),
             max_deliveries: cfg.max_deliveries,
-            upload_attempts: 3,
+            send_attempts: 3,
         }
     }
 }
@@ -71,7 +73,7 @@ pub struct App<T, C> {
     pub settings: Settings,
     pub state: StateStore,
     pending: Mutex<Pending>,
-    /// Progress edits per chat.
+    /// Sends and edits per chat.
     pub gate: ChatGate,
     pub deliveries: Arc<Deliveries>,
     /// Cancelled on SIGTERM / Ctrl-C: the loop and the trackers stop.
@@ -119,7 +121,8 @@ impl<T: Telegram + 'static, C: Core + 'static> App<T, C> {
     }
 
     /// Reads updates until shutdown; each update runs in its own task.
-    pub async fn run(self: Arc<Self>) {
+    /// Fails when Telegram rejects the token (401): nothing would work.
+    pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         let mut offset = 0i64;
         loop {
             let got = tokio::select! {
@@ -135,12 +138,24 @@ impl<T: Telegram + 'static, C: Core + 'static> App<T, C> {
                             .spawn(async move { router::handle_update(&app, u).await });
                     }
                 }
+                Err(e) if e.code == Some(401) => {
+                    tracing::error!(error = %e, "Telegram rejected TELEGRAM_BOT_TOKEN: check the token");
+                    anyhow::bail!("TELEGRAM_BOT_TOKEN rejected by Telegram (401)");
+                }
                 Err(e) => {
-                    let wait = e
-                        .retry_after
-                        .map(Duration::from_secs)
-                        .unwrap_or(self.settings.error_pause);
-                    tracing::warn!(error = %e, wait_ms = wait.as_millis() as u64, "getUpdates failed");
+                    let wait = if e.code == Some(409) {
+                        tracing::error!(
+                            error = %e,
+                            "getUpdates conflict: a webhook is set on this token \
+                             (call deleteWebhook) or another bot instance polls with it"
+                        );
+                        self.settings.conflict_pause
+                    } else {
+                        let wait = e.retry_after.map(Duration::from_secs);
+                        let wait = wait.unwrap_or(self.settings.error_pause);
+                        tracing::warn!(error = %e, wait_ms = wait.as_millis() as u64, "getUpdates failed");
+                        wait
+                    };
                     if !self.pause(wait).await {
                         break;
                     }
@@ -148,6 +163,7 @@ impl<T: Telegram + 'static, C: Core + 'static> App<T, C> {
             }
         }
         tracing::info!("update loop stopped");
+        Ok(())
     }
 
     /// Sleeps; returns false if the bot is shutting down.
@@ -163,58 +179,6 @@ impl<T: Telegram + 'static, C: Core + 'static> App<T, C> {
         self.tasks.close();
         self.tasks.wait().await;
         self.tasks.reopen();
-    }
-
-    /// Sends a text; failures are logged.
-    pub async fn say(
-        &self,
-        chat: i64,
-        text: &str,
-        kb: Option<&InlineKeyboardMarkup>,
-    ) -> Option<MessageId> {
-        match self.tg.send_message(chat, &clip(text, MAX_TEXT), kb).await {
-            Ok(id) => Some(id),
-            Err(e) => {
-                tracing::warn!(chat, error = %e, "sendMessage failed");
-                None
-            }
-        }
-    }
-
-    /// Edits `msg` if there is one, otherwise (or if the edit fails) sends
-    /// a new message. Returns the message that shows the text.
-    pub async fn replace(
-        &self,
-        chat: i64,
-        msg: Option<MessageId>,
-        text: &str,
-        kb: Option<&InlineKeyboardMarkup>,
-    ) -> Option<MessageId> {
-        if let Some(m) = msg {
-            match self
-                .tg
-                .edit_message(chat, m, &clip(text, MAX_TEXT), kb)
-                .await
-            {
-                Ok(()) => return Some(m),
-                Err(e) => tracing::warn!(chat, msg = m, error = %e, "edit failed"),
-            }
-        }
-        self.say(chat, text, kb).await
-    }
-
-    /// Answers a button click (stops the spinner); failures are logged.
-    pub async fn answer(&self, id: &str, text: Option<&str>) {
-        let text = text.map(|t| clip(t, MAX_ANSWER));
-        if let Err(e) = self.tg.answer_callback(id, text.as_deref()).await {
-            tracing::warn!(error = %e, "answerCallbackQuery failed");
-        }
-    }
-
-    pub async fn delete(&self, chat: i64, msg: MessageId) {
-        if let Err(e) = self.tg.delete_message(chat, msg).await {
-            tracing::warn!(chat, msg, error = %e, "deleteMessage failed");
-        }
     }
 }
 

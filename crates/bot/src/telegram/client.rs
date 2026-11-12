@@ -1,6 +1,5 @@
 //! reqwest implementation of the Bot API client.
 
-use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,7 +12,6 @@ use super::Telegram;
 use super::error::{SentMessage, TgError, parse};
 use super::types::{InlineKeyboardMarkup, MessageId, Update};
 
-const MAX_RETRY_WAIT: u64 = 60;
 const UPLOAD_CHUNK: usize = 64 * 1024;
 const JSON_TIMEOUT: Duration = Duration::from_secs(30);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -58,29 +56,14 @@ impl HttpTelegram {
         parse(resp).await
     }
 
-    /// Runs `f`; on 429 waits `retry_after` (capped) and tries once more.
-    async fn retrying<T, F, Fut>(&self, f: F) -> Result<T, TgError>
-    where
-        F: Fn() -> Fut,
-        Fut: Future<Output = Result<T, TgError>>,
-    {
-        match f().await {
-            Err(e) if e.code == Some(429) => {
-                let wait = e.retry_after.unwrap_or(1).min(MAX_RETRY_WAIT);
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                f().await
-            }
-            other => other,
-        }
-    }
-
+    /// One attempt: a 429 goes back to the caller, which paces the chat
+    /// and retries ([`crate::send`]).
     async fn json_call<T: DeserializeOwned>(
         &self,
         method: &str,
         body: Value,
     ) -> Result<T, TgError> {
-        self.retrying(|| self.post_json(method, &body, JSON_TIMEOUT))
-            .await
+        self.post_json(method, &body, JSON_TIMEOUT).await
     }
 
     async fn file_part(path: &Path) -> Result<Part, TgError> {
@@ -110,24 +93,37 @@ impl HttpTelegram {
         path: &Path,
         fields: &[(&str, String)],
     ) -> Result<(), TgError> {
-        let _: Value = self
-            .retrying(|| async {
-                let mut form = Form::new().part(field.to_string(), Self::file_part(path).await?);
-                for (k, v) in fields {
-                    form = form.text(k.to_string(), v.clone());
-                }
-                let resp = self
-                    .http
-                    .post(self.url(method))
-                    .timeout(UPLOAD_TIMEOUT)
-                    .multipart(form)
-                    .send()
-                    .await
-                    .map_err(TgError::transport)?;
-                parse(resp).await
-            })
-            .await?;
+        let mut form = Form::new().part(field.to_string(), Self::file_part(path).await?);
+        for (k, v) in fields {
+            form = form.text(k.to_string(), v.clone());
+        }
+        let resp = self
+            .http
+            .post(self.url(method))
+            .timeout(UPLOAD_TIMEOUT)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(TgError::transport)?;
+        let _: Value = parse(resp).await?;
         Ok(())
+    }
+}
+
+/// One update of a batch. An update the bot cannot read becomes an empty
+/// one, so the offset still moves past it; one without an id is dropped.
+fn decode_update(v: Value) -> Option<Update> {
+    let update_id = v.get("update_id").and_then(Value::as_i64)?;
+    match serde_json::from_value(v) {
+        Ok(u) => Some(u),
+        Err(e) => {
+            tracing::warn!(update_id, error = %e, "undecodable update skipped");
+            Some(Update {
+                update_id,
+                message: None,
+                callback_query: None,
+            })
+        }
     }
 }
 
@@ -173,8 +169,10 @@ impl Telegram for HttpTelegram {
             "timeout": timeout_s,
             "allowed_updates": ["message", "callback_query"],
         });
-        self.post_json("getUpdates", &body, Duration::from_secs(timeout_s + 15))
-            .await
+        let raw: Vec<Value> = self
+            .post_json("getUpdates", &body, Duration::from_secs(timeout_s + 15))
+            .await?;
+        Ok(raw.into_iter().filter_map(decode_update).collect())
     }
 
     async fn send_message(

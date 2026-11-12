@@ -1,6 +1,6 @@
 //! In-memory Bot API: records every call.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -58,8 +58,16 @@ pub struct FakeTg {
     /// Scripted `getUpdates` answers; when empty, it waits forever.
     pub updates: Mutex<VecDeque<Result<Vec<Update>, TgError>>>,
     pub offsets: Mutex<Vec<i64>>,
-    /// Every edit fails with a 429 (as after the client's single retry).
+    /// Every edit fails with a 429 (`retry_after` 0).
     pub fail_edits: AtomicBool,
+    /// Per chat: how many of the next sends, edits and photos fail with a
+    /// 429 (`retry_after` 0). Those attempts are not recorded as calls.
+    pub throttle: Mutex<HashMap<i64, usize>>,
+    /// (chat, when) of every attempt to send or edit in a chat.
+    pub chat_log: Mutex<Vec<(i64, Instant)>>,
+    /// An edit with this text waits for `release` before answering.
+    pub hold_edit: Mutex<Option<String>>,
+    pub release: tokio::sync::Notify,
     /// Errors returned by the next uploads, one per upload (still recorded).
     pub upload_errors: Mutex<VecDeque<TgError>>,
     /// (chat, when, text) of every edit.
@@ -80,6 +88,18 @@ impl FakeTg {
     }
     fn push(&self, c: Call) {
         self.calls.lock().unwrap().push(c);
+    }
+    /// Logs an attempt in `chat`; a 429 when the chat is throttled.
+    fn attempt(&self, chat: i64) -> Result<(), TgError> {
+        self.chat_log.lock().unwrap().push((chat, Instant::now()));
+        let mut throttle = self.throttle.lock().unwrap();
+        match throttle.get_mut(&chat) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                Err(too_many(0))
+            }
+            _ => Ok(()),
+        }
     }
     fn new_id(&self) -> MessageId {
         100 + self.next_id.fetch_add(1, Ordering::SeqCst)
@@ -136,6 +156,7 @@ impl Telegram for FakeTg {
         text: &str,
         kb: Option<&InlineKeyboardMarkup>,
     ) -> Result<MessageId, TgError> {
+        self.attempt(chat)?;
         self.push(Call::Send {
             chat,
             text: text.into(),
@@ -150,6 +171,7 @@ impl Telegram for FakeTg {
         text: &str,
         kb: Option<&InlineKeyboardMarkup>,
     ) -> Result<(), TgError> {
+        self.attempt(chat)?;
         self.push(Call::Edit {
             chat,
             msg,
@@ -158,8 +180,12 @@ impl Telegram for FakeTg {
         });
         let entry = (chat, Instant::now(), text.to_string());
         self.edit_log.lock().unwrap().push(entry);
+        let held = self.hold_edit.lock().unwrap().as_deref() == Some(text);
+        if held {
+            self.release.notified().await;
+        }
         if self.fail_edits.load(Ordering::SeqCst) {
-            return Err(too_many(3));
+            return Err(too_many(0));
         }
         Ok(())
     }
@@ -170,6 +196,7 @@ impl Telegram for FakeTg {
         caption: &str,
         kb: Option<&InlineKeyboardMarkup>,
     ) -> Result<MessageId, TgError> {
+        self.attempt(chat)?;
         self.push(Call::Photo {
             chat,
             url: url.into(),
@@ -187,6 +214,7 @@ impl Telegram for FakeTg {
         _w: Option<u32>,
         _h: Option<u32>,
     ) -> Result<(), TgError> {
+        self.chat_log.lock().unwrap().push((chat, Instant::now()));
         let (name, bytes) = file_info(path);
         self.push(Call::Video {
             chat,
@@ -205,6 +233,7 @@ impl Telegram for FakeTg {
         performer: Option<&str>,
         _d: Option<u32>,
     ) -> Result<(), TgError> {
+        self.chat_log.lock().unwrap().push((chat, Instant::now()));
         let (name, bytes) = file_info(path);
         self.push(Call::Audio {
             chat,
