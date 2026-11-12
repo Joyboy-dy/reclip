@@ -1,9 +1,12 @@
 use axum::Json;
 use axum::extract::State;
+use axum::response::{IntoResponse, Response};
 use reclip_shared::{ProbeRequest, ProbeResponse, Scope};
 
-use super::{ApiJson, HttpError, validate_url};
+use super::{ApiJson, validate_url};
 use crate::access::caller::Caller;
+use crate::access::limits::RateInfo;
+use crate::access::quota::check_probe;
 use crate::app::AppState;
 use crate::ytdlp::runner;
 
@@ -11,8 +14,16 @@ pub async fn probe(
     State(s): State<AppState>,
     caller: Caller,
     ApiJson(req): ApiJson<ProbeRequest>,
-) -> Result<Json<ProbeResponse>, HttpError> {
-    caller.require(Scope::Probe)?;
-    let url = validate_url(&req.url)?;
-    Ok(Json(runner::probe(&s.cfg, &url).await?))
+) -> Result<(Option<RateInfo>, Json<ProbeResponse>), Response> {
+    let url = validate_url(&req.url).map_err(|e| super::HttpError(e).into_response())?;
+    caller
+        .require(Scope::Probe)
+        .map_err(IntoResponse::into_response)?;
+    let rate = check_probe(&s, &caller)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    let probed = runner::probe(&s.cfg, &url)
+        .await
+        .map_err(|e| super::HttpError(e).into_response())?;
+    Ok((rate, Json(probed)))
 }

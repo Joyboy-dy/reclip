@@ -177,12 +177,12 @@ async fn failed_and_cancelled_jobs_expire_then_purge() {
         thumbnail: None,
     };
     let failed = mgr
-        .create(OWNER, req("https://error-bot.example/v"))
+        .create(OWNER, "", req("https://error-bot.example/v"))
         .await
         .unwrap()
         .id;
     let cancelled = mgr
-        .create(OWNER, req("https://slow.example/v"))
+        .create(OWNER, "", req("https://slow.example/v"))
         .await
         .unwrap()
         .id;

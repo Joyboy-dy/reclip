@@ -1,10 +1,13 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use reclip_shared::{CreateJobRequest, Job, JobList, Scope};
 
 use super::{ApiJson, HttpError, validate_url};
 use crate::access::caller::Caller;
+use crate::access::limits::RateInfo;
+use crate::access::quota::check_create;
 use crate::app::AppState;
 use crate::jobs::ManagerError;
 
@@ -12,11 +15,18 @@ pub async fn create(
     State(s): State<AppState>,
     caller: Caller,
     ApiJson(mut req): ApiJson<CreateJobRequest>,
-) -> Result<(StatusCode, Json<Job>), HttpError> {
-    caller.require(Scope::JobsCreate)?;
-    req.url = validate_url(&req.url)?;
-    let job = s.jobs.create(&caller.owner, req).await?;
-    Ok((StatusCode::ACCEPTED, Json(job)))
+) -> Result<(StatusCode, Option<RateInfo>, Json<Job>), Response> {
+    req.url = validate_url(&req.url).map_err(|e| HttpError(e).into_response())?;
+    caller
+        .require(Scope::JobsCreate)
+        .map_err(IntoResponse::into_response)?;
+    let rate = check_create(&s, &caller).await?;
+    let job = s
+        .jobs
+        .create(&caller.owner, &caller.quota_key, req)
+        .await
+        .map_err(|e| HttpError(e).into_response())?;
+    Ok((StatusCode::ACCEPTED, rate, Json(job)))
 }
 
 pub async fn list(State(s): State<AppState>, caller: Caller) -> Result<Json<JobList>, HttpError> {

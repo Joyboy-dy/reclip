@@ -46,7 +46,7 @@ async fn crashed_worker_fails_job_closes_stream_and_frees_slot() {
     cfg.max_concurrent = 1;
     let mgr = JobManager::new(Arc::new(cfg), Store::memory().await);
 
-    let crash = mgr.create(OWNER, req(PANIC_URL)).await.unwrap();
+    let crash = mgr.create(OWNER, "", req(PANIC_URL)).await.unwrap();
     std::fs::create_dir_all(dir.path().join(&crash.id)).unwrap();
     // Synchronous right after `create`: the worker has not been polled yet.
     let (_, mut rx) = mgr.hub().subscribe(&crash.id).unwrap();
@@ -70,7 +70,10 @@ async fn crashed_worker_fails_job_closes_stream_and_frees_slot() {
     assert!(!dir.path().join(&crash.id).exists());
 
     // The slot was released: the next job still runs (and fails normally).
-    let next = mgr.create(OWNER, req("https://ok.test/")).await.unwrap();
+    let next = mgr
+        .create(OWNER, "", req("https://ok.test/"))
+        .await
+        .unwrap();
     let job = wait_terminal(&mgr, &next.id).await;
     assert_eq!(job.state, JobState::Failed);
     assert_ne!(job.error.unwrap().message, "Job crashed");
