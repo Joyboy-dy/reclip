@@ -128,7 +128,7 @@ async fn config_exposes_limits() {
     assert_eq!(c["max_duration"], 600);
     assert_eq!(
         c["limits"],
-        json!({"probes_per_minute": 120, "jobs_per_hour": 7, "max_active": 80})
+        json!({"probes_per_minute": 120, "jobs_per_hour": 7, "max_active": 200})
     );
 }
 
