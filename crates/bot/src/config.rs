@@ -17,6 +17,8 @@ pub struct Config {
     pub state_path: PathBuf,
     /// Largest file the bot sends itself, in bytes.
     pub max_upload: u64,
+    /// Public address of the ReClip website (`RECLIP_PUBLIC_URL`), if known.
+    pub public_url: Option<String>,
 }
 
 // The token and key are secrets: never print them.
@@ -27,6 +29,7 @@ impl std::fmt::Debug for Config {
             .field("core_url", &self.core_url)
             .field("state_path", &self.state_path)
             .field("max_upload", &self.max_upload)
+            .field("public_url", &self.public_url)
             .finish_non_exhaustive()
     }
 }
@@ -64,6 +67,7 @@ impl Config {
             None if api_url == OFFICIAL_API => OFFICIAL_MAX_UPLOAD,
             None => LOCAL_MAX_UPLOAD,
         };
+        let public_url = val("RECLIP_PUBLIC_URL").map(|u| trim_url(&u));
         Ok(Config {
             token,
             api_url,
@@ -71,6 +75,7 @@ impl Config {
             key,
             state_path,
             max_upload,
+            public_url,
         })
     }
 }
@@ -123,6 +128,18 @@ mod tests {
             c.state_path,
             PathBuf::from("/var/lib/reclip-bot/state.json")
         );
+        assert_eq!(c.public_url, None);
+    }
+
+    #[test]
+    fn public_url_is_optional_and_trimmed() {
+        let c = Config::from_env(&env(&[
+            ("TELEGRAM_BOT_TOKEN", "t"),
+            ("RECLIP_BOT_KEY", "k"),
+            ("RECLIP_PUBLIC_URL", "https://reclip.example/"),
+        ]))
+        .unwrap();
+        assert_eq!(c.public_url.as_deref(), Some("https://reclip.example"));
     }
 
     #[test]
