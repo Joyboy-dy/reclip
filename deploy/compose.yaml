@@ -111,6 +111,10 @@ services:
       - core_net
     cap_add:
       - NET_ADMIN
+    # Lets the container open /dev/net/tun (char 10:200) on hosts that enforce
+    # the default device cgroup rules; NET_ADMIN alone is not enough there.
+    device_cgroup_rules:
+      - "c 10:200 rwm"
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     volumes:
