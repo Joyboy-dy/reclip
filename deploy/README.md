@@ -41,9 +41,26 @@ Pour que Dokploy utilise cette image au lieu de la construire :
 
 Le build local (`docker compose -f deploy/compose.yaml up --build`) reste disponible.
 
-## Cookies YouTube
+## YouTube bloque le serveur
 
-YouTube refuse la plupart des IP de datacenter (*« Sign in to confirm you're not a bot »*). Pour contourner :
+YouTube refuse la plupart des IP de datacenter (*« Sign in to confirm you're not a bot »*). Deux solutions : Cloudflare WARP (sans compte), ou des cookies.
+
+### Cloudflare WARP
+
+Le service `warp` (profil `warp`) fait sortir le trafic de yt-dlp par le réseau de Cloudflare. Gratuit, sans compte.
+
+1. Dans l'onglet Environment de Dokploy (ou `deploy/.env`), ajoutez `warp` aux profils et le proxy :
+   ```
+   COMPOSE_PROFILES=telegram,warp
+   RECLIP_PROXY=socks5://warp:1080
+   ```
+2. Redéployez. Tous les téléchargements (tous les sites) passent alors par WARP.
+
+YouTube peut aussi bloquer certaines adresses de WARP. Dans ce cas, redémarrez le conteneur `warp` (il obtient souvent une autre adresse), ou passez aux cookies. Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
+
+### Cookies YouTube
+
+Pour contourner avec un compte :
 
 1. Utilisez un compte Google secondaire : les comptes utilisés avec yt-dlp peuvent être signalés.
 2. Dans une fenêtre privée, connectez-vous à YouTube, exportez les cookies avec une extension comme *Get cookies.txt LOCALLY*, puis fermez la fenêtre sans naviguer davantage (YouTube fait tourner les cookies des sessions ouvertes).

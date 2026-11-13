@@ -101,6 +101,28 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
       TZ: ${TZ:-UTC}
 
+  # Cloudflare WARP as a proxy for yt-dlp: downloads leave through Cloudflare
+  # instead of the server's datacenter IP, which YouTube often blocks.
+  # Start it with the "warp" profile and set RECLIP_PROXY=socks5://warp:1080.
+  warp:
+    profiles: [warp]
+    image: caomingjun/warp:2026.8.2115.0-2.12.0
+    networks:
+      - core_net
+    cap_add:
+      - NET_ADMIN
+    # Lets the container open /dev/net/tun (char 10:200) on hosts that enforce
+    # the default device cgroup rules; NET_ADMIN alone is not enough there.
+    device_cgroup_rules:
+      - "c 10:200 rwm"
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+    volumes:
+      - warp-data:/var/lib/cloudflare-warp
+    restart: unless-stopped
+    environment:
+      WARP_SLEEP: ${WARP_SLEEP:-2}
+
   # Local Bot API server: lifts the upload limit from 50 MB to 2000 MB.
   # Set TELEGRAM_API_URL=http://telegram-bot-api:8081 for the bot.
   telegram-bot-api:
@@ -126,3 +148,4 @@ volumes:
   secrets:
   bot-data:
   tg-data:
+  warp-data:

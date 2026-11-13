@@ -119,7 +119,13 @@ async fn several_jobs_in_one_chat_respect_the_edit_gap() {
         .map(|p| job("x", JobState::Downloading, Some(p as f32), None))
         .collect();
     states.push(done(Some(10)));
-    let e = env_with(core(states, 10), |s| s.edit_gap = gap);
+    // 60 polls of 10 ms (~600 ms of progress per job) leave room for several
+    // gated edits after the three first messages took their turns (3 x 40 ms);
+    // with the 2 ms default a fast machine could finish before any edit.
+    let e = env_with(core(states, 10), |s| {
+        s.edit_gap = gap;
+        s.poll_interval = Duration::from_millis(10);
+    });
     for id in 1..=3 {
         handle_update(&e.app, mp3(id)).await;
     }
