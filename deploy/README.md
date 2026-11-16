@@ -52,9 +52,11 @@ Le service `warp` (profil `warp`) fait sortir le trafic de yt-dlp par le réseau
 1. Dans l'onglet Environment de Dokploy (ou `deploy/.env`), ajoutez `warp` aux profils et le proxy :
    ```
    COMPOSE_PROFILES=telegram,warp
-   RECLIP_PROXY=socks5://warp:1080
+   RECLIP_PROXY=http://warp:1080
    ```
 2. Redéployez. Tous les téléchargements (tous les sites) passent alors par WARP.
+
+Gardez `http://` et pas `socks5://` : ffmpeg, qui découpe les extraits (Clip) et certains flux, ne sait pas passer par un proxy SOCKS. Avec `socks5://`, il sort par l'IP du serveur et YouTube répond 403 (« ffmpeg exited with code 8 »).
 
 YouTube peut aussi bloquer certaines adresses de WARP. Dans ce cas, redémarrez le conteneur `warp` (il obtient souvent une autre adresse), ou passez aux cookies. Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
 

@@ -103,7 +103,8 @@ services:
 
   # Cloudflare WARP as a proxy for yt-dlp: downloads leave through Cloudflare
   # instead of the server's datacenter IP, which YouTube often blocks.
-  # Start it with the "warp" profile and set RECLIP_PROXY=socks5://warp:1080.
+  # Start it with the "warp" profile and set RECLIP_PROXY=http://warp:1080.
+  # Use http://, not socks5://: ffmpeg (clips, some streams) only speaks HTTP proxies.
   warp:
     profiles: [warp]
     image: caomingjun/warp:2026.8.2115.0-2.12.0
