@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { getConfig, startBootstrap } from "../api/client";
 import { initNonce } from "@/lib/nonce";
 import { App } from "./App";
@@ -12,7 +13,11 @@ initNonce();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
-createRoot(root).render(<App />);
+createRoot(root).render(
+  <TooltipProvider>
+    <App />
+  </TooltipProvider>,
+);
 
 // The config request goes first and alone: its response sets the visitor
 // cookie that every later request (restore, history, downloads) must share.

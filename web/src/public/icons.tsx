@@ -51,3 +51,11 @@ export const MusicIcon = ({ size = 20, className }: IconProps) => (
     <circle cx="18" cy="16" r="3" />
   </svg>
 );
+
+export const InfoIcon = ({ size = 13, className }: IconProps) => (
+  <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5" />
+    <path d="M12 7.5v.01" />
+  </svg>
+);

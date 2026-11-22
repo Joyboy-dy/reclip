@@ -15,6 +15,8 @@ const PROGRESS_TEMPLATE: &str = "download:[reclip] %(progress.downloaded_bytes)s
 const IMPERSONATE_HOSTS: [&str; 2] = ["instagram.com", "tiktok.com"];
 const BILIBILI_HOSTS: [&str; 2] = ["bilibili.com", "b23.tv"];
 const X_HOSTS: [&str; 2] = ["x.com", "twitter.com"];
+const SOUNDCLOUD_HOSTS: [&str; 1] = ["soundcloud.com"];
+const YT_MUSIC_HOSTS: [&str; 1] = ["music.youtube.com"];
 
 /// Lower-case host of `url`, without credentials or port.
 fn host_of(url: &str) -> String {
@@ -25,7 +27,7 @@ fn host_of(url: &str) -> String {
 }
 
 /// True when the host of `url` is one of `domains` or a subdomain of one.
-fn on_domain(url: &str, domains: &[&str]) -> bool {
+pub(crate) fn on_domain(url: &str, domains: &[&str]) -> bool {
     let host = host_of(url);
     domains
         .iter()
@@ -81,6 +83,8 @@ pub fn format_name(format: MediaFormat) -> &'static str {
         MediaFormat::Opus => "opus",
         MediaFormat::Flac => "flac",
         MediaFormat::Wav => "wav",
+        // yt-dlp keeps the source codec and picks the matching extension.
+        MediaFormat::Original => "best",
     }
 }
 
@@ -90,6 +94,43 @@ fn section(clip: &Clip) -> String {
         Some(end) => format!("*{}-{end}", clip.start),
         None => format!("*{}-inf", clip.start),
     }
+}
+
+/// Tags and cover art go into audio files unless metadata removal is asked.
+/// WAV takes tags but no cover.
+fn embeds_tags(opts: &DownloadOptions) -> bool {
+    opts.format.is_audio() && !opts.strip_metadata
+}
+
+/// ffmpeg filter of the written thumbnail: a small card picture, or a cover
+/// big enough to embed (YouTube Music frames cropped to a square).
+fn thumb_filter(opts: &DownloadOptions, url: &str) -> &'static str {
+    match (embeds_tags(opts), on_domain(url, &YT_MUSIC_HOSTS)) {
+        (false, _) => "scale=160:-2",
+        // YouTube thumbnails are always landscape, so `ih` is the short side.
+        (true, true) => "crop=ih:ih,scale=600:600",
+        (true, false) => "scale=600:600:force_original_aspect_ratio=decrease",
+    }
+}
+
+/// Arguments of a download whose extraction is already done: yt-dlp reads
+/// `info_json` (a YouTube match with the music platform's tags and cover)
+/// instead of fetching a URL.
+pub fn download_args_from_info(
+    out_dir: &Path,
+    opts: &DownloadOptions,
+    cfg: &Config,
+    info_json: &Path,
+) -> Vec<String> {
+    // Any URL that is not music.youtube.com: the cover is the platform's
+    // square art, never cropped.
+    let mut a = download_args(out_dir, opts, cfg, "info-json:");
+    a.truncate(a.len() - 2);
+    a.extend([
+        "--load-info-json".into(),
+        info_json.to_string_lossy().into_owned(),
+    ]);
+    a
 }
 
 /// Arguments of one download into `out_dir` (`media.<ext>`, `thumb.jpg`).
@@ -121,10 +162,13 @@ pub fn download_args(
             "-o",
             &format!("thumbnail:{}", thumb.to_string_lossy()),
             "--postprocessor-args",
-            "ThumbnailsConvertor+ffmpeg_o:-vf scale=160:-2",
         ]
         .map(String::from),
     );
+    a.push(format!(
+        "ThumbnailsConvertor+ffmpeg_o:-vf {}",
+        thumb_filter(opts, url)
+    ));
     let name = format_name(opts.format);
     // Faststart and metadata removal are not done here: yt-dlp skips its
     // remux/extract postprocessors for files already in the target format.
@@ -132,7 +176,13 @@ pub fn download_args(
     // The remux still brings a single-file source (nothing to merge) to the
     // requested container when yt-dlp can.
     match format_selector(opts.format, opts.format_id.as_deref()) {
-        None => a.extend(["-x", "--audio-format", name].map(String::from)),
+        None => {
+            a.extend(["-x", "--audio-format", name].map(String::from));
+            if on_domain(url, &SOUNDCLOUD_HOSTS) {
+                // Go+ tracks only serve a 30 s preview: fail instead.
+                a.extend(["-f", "ba[format_id!*=preview]"].map(String::from));
+            }
+        }
         Some(selector) => a.extend([
             "-f".into(),
             selector,
@@ -141,6 +191,12 @@ pub fn download_args(
             "--remux-video".into(),
             name.into(),
         ]),
+    }
+    if embeds_tags(opts) {
+        a.push("--embed-metadata".into());
+        if opts.format != MediaFormat::Wav {
+            a.push("--embed-thumbnail".into());
+        }
     }
     if let Some(clip) = &opts.clip {
         a.extend(["--download-sections".into(), section(clip)]);

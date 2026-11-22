@@ -8,6 +8,7 @@ pub mod healthcheck;
 pub mod http;
 pub mod jobs;
 pub mod mcp;
+pub mod music;
 pub mod service;
 pub mod store;
 pub mod transcript;

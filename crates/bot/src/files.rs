@@ -70,6 +70,8 @@ pub fn format_ext(f: MediaFormat) -> &'static str {
         MediaFormat::Opus => "opus",
         MediaFormat::Flac => "flac",
         MediaFormat::Wav => "wav",
+        // Only a fallback: the core's file name carries the real extension.
+        MediaFormat::Original => "m4a",
     }
 }
 

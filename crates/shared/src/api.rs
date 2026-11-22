@@ -14,6 +14,8 @@ pub enum MediaFormat {
     Opus,
     Flac,
     Wav,
+    /// The source's own audio stream, not re-encoded (`.opus`, `.m4a`, `.mp3`...).
+    Original,
 }
 
 impl MediaFormat {
@@ -26,6 +28,7 @@ impl MediaFormat {
                 | MediaFormat::Opus
                 | MediaFormat::Flac
                 | MediaFormat::Wav
+                | MediaFormat::Original
         )
     }
 }
@@ -68,6 +71,14 @@ pub struct VideoInfo {
     pub duration: Option<f64>,
     pub uploader: Option<String>,
     pub formats: Vec<FormatOption>,
+    /// The link only has audio (a music track): video formats do not apply.
+    #[serde(default)]
+    pub audio_only: bool,
+    /// Music platform (`Spotify`, `Deezer`, `Apple Music`) whose track is
+    /// downloaded from its YouTube match: the audio is YouTube's.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub matched_from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, TS)]

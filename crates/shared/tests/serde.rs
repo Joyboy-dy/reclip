@@ -87,6 +87,7 @@ fn media_formats_use_lowercase_wire_names() {
         (MediaFormat::Opus, "opus", true),
         (MediaFormat::Flac, "flac", true),
         (MediaFormat::Wav, "wav", true),
+        (MediaFormat::Original, "original", true),
     ] {
         assert_eq!(serde_json::to_string(&f).unwrap(), format!("\"{s}\""));
         assert_eq!(f.is_audio(), audio, "{s}");

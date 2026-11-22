@@ -10,17 +10,19 @@ use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::args::{
-    DownloadOptions, SessionArgs, cookies_available, download_args, format_name, meta_args,
-    probe_args, session_args, subs_args,
+    DownloadOptions, SessionArgs, cookies_available, download_args, download_args_from_info,
+    format_name, meta_args, probe_args, session_args, subs_args,
 };
 use super::download_args::is_x_post;
+use super::download_args::on_domain;
 use super::errors::classify;
 use super::finalize::finalize;
-use super::parse::{parse_first_json, playlist_info, video_info, x_post_info};
+use super::parse::{is_preview_only, parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
 use super::subs::{TMP_PREFIX, available, choose, parse_tracks, read_track};
 use crate::config::Config;
+use crate::music;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Time yt-dlp gets to exit after SIGTERM before the group is SIGKILLed.
@@ -94,6 +96,10 @@ fn failure(cfg: &Config, out: &Captured) -> ApiError {
 }
 
 pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
+    if music::is_music_link(url) {
+        let (platform, fetched) = music::fetch(url).await?;
+        return Ok(music::probe_response(platform, fetched, cfg.playlist_limit));
+    }
     let args = probe_args(cfg, url);
     let never = CancellationToken::new();
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
@@ -106,11 +112,73 @@ pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
         return Ok(ProbeResponse::Playlist(post));
     }
     let json = parse_first_json(&out.stdout)?;
-    if url.contains("list=") {
-        Ok(ProbeResponse::Playlist(playlist_info(&json)))
-    } else {
-        Ok(ProbeResponse::Video(video_info(&json)))
+    if json["_type"] == "playlist" || url.contains("list=") {
+        return Ok(ProbeResponse::Playlist(playlist_info(&json)));
     }
+    if is_preview_only(&json) {
+        return Err(go_plus());
+    }
+    Ok(ProbeResponse::Video(video_info(&json)))
+}
+
+fn go_plus() -> ApiError {
+    err(
+        ErrorCode::Unavailable,
+        "This SoundCloud track is for Go+ subscribers: only a 30 s preview is public",
+    )
+}
+
+/// A yt-dlp info file for a music platform's track: the YouTube upload that
+/// matches it, carrying the platform's title, artists, album and cover.
+/// Removed when dropped.
+async fn music_info_json(
+    cfg: &Config,
+    url: &str,
+    cancel: &CancellationToken,
+) -> Result<tempfile::TempPath, ApiError> {
+    let (platform, fetched) = music::fetch(url).await?;
+    let track = music::single_track(fetched)?;
+    let search = [
+        "--flat-playlist".into(),
+        "-J".into(),
+        "--".into(),
+        music::search_query(&track),
+    ];
+    let out = run(cfg, &search, PROBE_TIMEOUT, usize::MAX, |_| {}, cancel).await?;
+    if !out.status.success() {
+        return Err(failure(cfg, &out));
+    }
+    let Some(id) = music::pick(&track, &parse_first_json(&out.stdout)?) else {
+        tracing::info!(url, title = %track.title, "no YouTube match");
+        return Err(err(
+            ErrorCode::Unavailable,
+            format!(
+                "No matching song found on YouTube for this {} track",
+                platform.name()
+            ),
+        ));
+    };
+    let video = format!("https://www.youtube.com/watch?v={id}");
+    let args = ["--no-playlist".into(), "-j".into(), "--".into(), video];
+    let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, cancel).await?;
+    if !out.status.success() {
+        return Err(failure(cfg, &out));
+    }
+    let mut info = parse_first_json(&out.stdout)?;
+    music::retag(&mut info, &track);
+    let root = cfg.data_dir.join("tmp");
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&root)?;
+        let file = tempfile::Builder::new()
+            .prefix("reclip-music-")
+            .suffix(".info.json")
+            .tempfile_in(&root)?;
+        serde_json::to_writer(&file, &info)?;
+        Ok::<_, std::io::Error>(file.into_temp_path())
+    })
+    .await
+    .map_err(|e| io_err(std::io::Error::other(e)))?
+    .map_err(io_err)
 }
 
 /// Subtitles of `url` as plain text, fetched without the media into a
@@ -211,7 +279,16 @@ pub async fn download_with(
     mut on_progress: impl FnMut(ProgressEvent) + Send,
     cancel: CancellationToken,
 ) -> Result<PathBuf, ApiError> {
-    let args = download_args(job_dir, opts, cfg, url);
+    // `_info` lives until the download ends: yt-dlp reads it.
+    let (args, _info) = if music::is_music_link(url) {
+        let info = music_info_json(cfg, url, &cancel).await?;
+        (
+            download_args_from_info(job_dir, opts, cfg, &info),
+            Some(info),
+        )
+    } else {
+        (download_args(job_dir, opts, cfg, url), None)
+    };
     let format = opts.format;
     let on_line = |line: &str| {
         if let Some(event) = parse_line(line) {
@@ -220,7 +297,12 @@ pub async fn download_with(
     };
     let out = run(cfg, &args, cfg.job_timeout, DOWNLOAD_TAIL, on_line, &cancel).await?;
     if !out.status.success() {
-        return Err(failure(cfg, &out));
+        let e = failure(cfg, &out);
+        // The `-f` that skips previews leaves nothing for a Go+ track.
+        if on_domain(url, &["soundcloud.com"]) && e.message.contains("Requested format") {
+            return Err(go_plus());
+        }
+        return Err(e);
     }
     let Some(path) = pick_output(job_dir, format) else {
         return Err(no_file_error(&out));

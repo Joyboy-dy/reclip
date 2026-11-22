@@ -106,6 +106,9 @@ fn validate_options(req: &CreateJobRequest) -> Result<(), ApiError> {
     if req.playlist_item == Some(0) {
         return invalid("Playlist item must be 1 or more");
     }
+    if crate::music::is_music_link(&req.url) && !req.format.is_audio() {
+        return invalid("Music links are audio only: pick an audio format");
+    }
     Ok(())
 }
 

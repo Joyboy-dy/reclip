@@ -82,15 +82,22 @@ pub fn probe_args(cfg: &Config, url: &str) -> Vec<String> {
     let mut a: Vec<String> = if is_x_post(url) {
         // No --no-playlist: a multi-video post then prints one JSON per video.
         vec!["-j".into()]
-    } else if url.contains("list=") {
-        vec![
+    } else {
+        // A video that also names a playlist is the video; a link that is
+        // only a list (`?list=`, a SoundCloud set, a Bandcamp album) comes
+        // back flat, as `_type: playlist`.
+        let mut a: Vec<String> = if url.contains("list=") {
+            vec![]
+        } else {
+            vec!["--no-playlist".into()]
+        };
+        a.extend([
             "--flat-playlist".into(),
             "-J".into(),
             "--playlist-end".into(),
             cfg.playlist_limit.to_string(),
-        ]
-    } else {
-        vec!["--no-playlist".into(), "-j".into()]
+        ]);
+        a
     };
     a.extend(site_args(cfg, url));
     a.extend(["--".into(), url.into()]);
@@ -140,7 +147,9 @@ pub fn subs_args(cfg: &Config, url: &str, key: &str, dir: &Path) -> Vec<String> 
     a
 }
 
-pub use super::download_args::{DownloadOptions, download_args, format_name, format_selector};
+pub use super::download_args::{
+    DownloadOptions, download_args, download_args_from_info, format_name, format_selector,
+};
 
 #[cfg(test)]
 mod tests {
@@ -216,7 +225,15 @@ mod tests {
     fn single_video_probe() {
         assert_eq!(
             probe_args(&cfg(), "https://youtube.com/watch?v=a"),
-            ["--no-playlist", "-j", "--", "https://youtube.com/watch?v=a"]
+            [
+                "--no-playlist",
+                "--flat-playlist",
+                "-J",
+                "--playlist-end",
+                "50",
+                "--",
+                "https://youtube.com/watch?v=a"
+            ]
         );
     }
     #[test]

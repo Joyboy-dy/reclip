@@ -27,19 +27,21 @@ export function formatLabel(c: Card): string {
 
 const join = (parts: (string | false | undefined | null)[]): string => parts.filter(Boolean).join(" · ");
 const duration = (c: Card) => (c.info?.duration ? fmtClock(c.info.duration) : "");
+/** The music platform a track was matched from ("Spotify"). */
+const platform = (c: Card) => c.info?.matched_from;
 
 /** "Blender Foundation · 10:34", "TikTok · 0:58 · MP4 720p · metadata removed". */
 export function cardMeta(c: Card): string {
   const p = phaseOf(c);
-  if (p === "ready" || p === "loading" || p === "info-error") return join([who(c), duration(c)]);
-  return join([who(c), duration(c), formatLabel(c), c.clip && clipText(c.clip), c.strip && "metadata removed"]);
+  if (p === "ready" || p === "loading" || p === "info-error") return join([who(c), duration(c), platform(c)]);
+  return join([who(c), duration(c), platform(c), formatLabel(c), c.clip && clipText(c.clip), c.strip && "metadata removed"]);
 }
 
 /** The shorter phone meta line: "MP4 1080p · clip 0:05 to 0:30", "Cancelled at 63% · MKV 1080p". */
 export function phoneMeta(c: Card): string {
   switch (phaseOf(c)) {
     case "ready":
-      return join([who(c), duration(c)]);
+      return join([who(c), duration(c), platform(c)]);
     case "waiting":
     case "starting":
       return join([who(c), formatLabel(c)]);

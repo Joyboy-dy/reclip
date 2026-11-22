@@ -18,7 +18,7 @@ pub struct ToolDef {
     pub input_schema: Value,
 }
 
-const FORMATS: [MediaFormat; 8] = [
+const FORMATS: [MediaFormat; 9] = [
     MediaFormat::Mp4,
     MediaFormat::Mkv,
     MediaFormat::Mov,
@@ -27,6 +27,7 @@ const FORMATS: [MediaFormat; 8] = [
     MediaFormat::Opus,
     MediaFormat::Flac,
     MediaFormat::Wav,
+    MediaFormat::Original,
 ];
 
 const SCHEMA: &str = "https://json-schema.org/draft/2020-12/schema";
@@ -69,7 +70,7 @@ fn start_download_schema() -> Value {
                 "type": "string",
                 "enum": formats,
                 "default": "mp4",
-                "description": "Output format: mp4, mkv or mov for video; mp3, m4a, opus, flac or wav for audio only."
+                "description": "Output format: mp4, mkv or mov for video; mp3, m4a, opus, flac or wav for audio only; original keeps the source's audio without re-encoding. Music links (Spotify, Deezer, Apple Music) are audio only."
             },
             "quality": {
                 "type": "string",

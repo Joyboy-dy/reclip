@@ -55,6 +55,15 @@ async fn probe_video() {
 }
 
 #[tokio::test]
+async fn a_list_without_list_param_is_a_playlist() {
+    // A SoundCloud set or a Bandcamp album: yt-dlp says `_type: playlist`.
+    let r = probe(&fake(), "https://soundcloud.com/a/sets/b")
+        .await
+        .unwrap();
+    assert!(matches!(r, ProbeResponse::Playlist(p) if p.entries.len() == 3));
+}
+
+#[tokio::test]
 async fn probe_playlist() {
     let ProbeResponse::Playlist(p) = probe(&fake(), "https://ok?list=PL1").await.unwrap() else {
         panic!("expected playlist")

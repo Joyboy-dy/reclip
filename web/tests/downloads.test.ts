@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { Job, ProbeResponse } from "../src/api/types.gen";
-import { download, fetchLinks, resume } from "../src/public/downloads";
+import { download, fetchLinks, pickCardFormat, resume } from "../src/public/downloads";
 import { clean, downloadAgain, loadHistory, removeEntry } from "../src/public/history";
 import { findCard, initialState, setOptions, store } from "../src/public/store";
 
@@ -18,7 +18,7 @@ const job = (over: Partial<Job> = {}): Job => ({
   expires_at: null, clip: null, strip_metadata: false, resumable: false, playlist_item: null, ...over,
 });
 const video = (title: string): ProbeResponse => ({
-  kind: "video", title, thumbnail: null, duration: 10, uploader: null,
+  kind: "video", title, thumbnail: null, duration: 10, uploader: null, audio_only: false,
   formats: [{ id: "137", label: "1080p", height: 1080, codec: null }, { id: "136", label: "720p", height: 720, codec: null }],
 });
 
@@ -71,6 +71,42 @@ test("download sends the page options: container, quality, clip and metadata", a
   const create = calls.find((c) => c.path === "/api/v1/jobs" && c.method === "POST");
   expect(create?.body).toEqual({ url: "https://y/v", format: "mkv", format_id: "136", title: "v", clip: { start: 80, end: 125 }, strip_metadata: true });
   expect(findCard(key)).toMatchObject({ status: "downloading", jobId: "j1", strip: true });
+});
+
+test("a music track downloads as audio even with Video selected", async () => {
+  const track: ProbeResponse = { kind: "video", title: "T", thumbnail: null, duration: 200, uploader: "A", formats: [], audio_only: true, matched_from: "Spotify" };
+  reply = (c) => (c.path === "/api/v1/probe" ? json(track) : json(job({ format: "opus" })));
+  await fetchLinks(["https://open.spotify.com/track/x"]);
+  setOptions({ media: "video", container: "mp4", audio: "opus" });
+  await download(store.get().cards[0].key);
+  const create = calls.find((c) => c.path === "/api/v1/jobs" && c.method === "POST");
+  expect(create?.body).toEqual({ url: "https://open.spotify.com/track/x", format: "opus", title: "T", strip_metadata: false });
+});
+
+test("one batch mixes formats: each card can pick its own", async () => {
+  const track: ProbeResponse = { kind: "video", title: "T", thumbnail: null, duration: 200, uploader: "A", formats: [], audio_only: true, matched_from: "Deezer" };
+  reply = (c) => {
+    if (c.path === "/api/v1/probe") return json((c.body as { url: string }).url.includes("deezer") ? track : video("v"));
+    // Ended at once: no job stays followed into the next test.
+    return json(job({ state: "cancelled" }));
+  };
+  await fetchLinks(["https://www.deezer.com/track/1", "https://y/v"]);
+  setOptions({ media: "video", container: "mp4", audio: "mp3" });
+  const [music, clip] = store.get().cards;
+  pickCardFormat(music.key, "flac");
+  await download(music.key);
+  await download(clip.key);
+  const formats = calls.filter((c) => c.path === "/api/v1/jobs" && c.method === "POST").map((c) => (c.body as { format: string }).format);
+  expect(formats).toEqual(["flac", "mp4"]);
+});
+
+test("only music links switch the page to Audio; a mix keeps Video", async () => {
+  const track: ProbeResponse = { kind: "video", title: "T", thumbnail: null, duration: 200, uploader: "A", formats: [], audio_only: true, matched_from: "Deezer" };
+  reply = (c) => json((c.body as { url: string }).url.includes("deezer") ? track : video("v"));
+  await fetchLinks(["https://www.deezer.com/track/1", "https://y/v"]);
+  expect(store.get().options.media).toBe("video");
+  await fetchLinks(["https://www.deezer.com/track/1"]);
+  expect(store.get().options.media).toBe("audio");
 });
 
 test("invalid clip times keep the card ready and say why", async () => {

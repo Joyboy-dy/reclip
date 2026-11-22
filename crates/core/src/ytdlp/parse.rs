@@ -91,7 +91,25 @@ pub fn video_info(v: &Value) -> VideoInfo {
         duration: v["duration"].as_f64(),
         uploader: text("uploader"),
         formats: options,
+        audio_only: !formats.is_empty() && formats.iter().all(|f| f["vcodec"] == "none"),
+        matched_from: None,
     }
+}
+
+/// A SoundCloud Go+ track: without a subscription only its 30 s preview
+/// is served.
+pub fn is_preview_only(v: &Value) -> bool {
+    let formats = v["formats"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    v["extractor_key"] == "Soundcloud"
+        && !formats.is_empty()
+        && formats.iter().all(|f| {
+            f["format_id"]
+                .as_str()
+                .is_some_and(|id| id.contains("preview"))
+        })
 }
 
 /// A post with several videos (`-j` printed one JSON object per video): one
@@ -197,6 +215,29 @@ mod tests {
             .collect();
         assert_eq!(p.title, "P");
         assert_eq!(got, [("u1", Some("T1"), None), ("u2", None, None)]);
+    }
+
+    #[test]
+    fn audio_only_and_previews() {
+        let sc = |ids: &[&str]| {
+            let formats: Vec<_> = ids
+                .iter()
+                .map(|id| json!({"format_id": id, "vcodec": "none"}))
+                .collect();
+            json!({"extractor_key": "Soundcloud", "formats": formats})
+        };
+        assert!(video_info(&sc(&["hls_aac_160k"])).audio_only);
+        assert!(!is_preview_only(&sc(&["hls_aac_160k", "hls_mp3_preview"])));
+        assert!(is_preview_only(&sc(&[
+            "hls_mp3_preview",
+            "http_mp3_preview"
+        ])));
+        let yt = json!({"extractor_key": "Youtube", "formats": [
+            {"format_id": "140", "vcodec": "none"},
+            {"format_id": "137", "vcodec": "avc1", "height": 1080}
+        ]});
+        assert!(!video_info(&yt).audio_only);
+        assert!(!video_info(&json!({"title": "x"})).audio_only);
     }
 
     #[test]

@@ -236,6 +236,13 @@ Anything [yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supporte
 
 YouTube, TikTok, Instagram, Twitter/X, Reddit, Facebook, Vimeo, Twitch, Dailymotion, SoundCloud, Loom, Streamable, Pinterest, Tumblr, Threads, LinkedIn, and many more.
 
+### Music
+
+- **SoundCloud, Bandcamp, YouTube Music**: the platform's own audio. Tracks, sets, albums and playlists; SoundCloud Go+ tracks (30 s preview only) are refused.
+- **Spotify, Deezer, Apple Music**: their audio is encrypted, so ReClip reads the public metadata (no account, cookie or API key), downloads the matching YouTube upload (duration within 3 s, official uploads first, no live, cover or remix unless the track is one) and writes the platform's title, artists, album and cover into the file. The audio quality is YouTube's (about 130 to 160 kbps), whatever the platform offers. Apple Music playlists are not public and are refused.
+
+Audio files carry their tags and cover art unless **Remove metadata** is checked. The **Original** audio format keeps the source's stream without re-encoding (`.opus`, `.m4a`, `.mp3`).
+
 ## Stack
 
 - **Backend:** Rust ([axum](https://github.com/tokio-rs/axum)), state in SQLite
