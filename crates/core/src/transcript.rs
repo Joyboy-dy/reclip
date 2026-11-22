@@ -32,6 +32,8 @@ pub async fn transcript(
     }
     let language = req.language.as_deref().map(validate_language).transpose()?;
     caller.require(Scope::Probe)?;
+    s.activity.record(&s.store, caller);
+    s.blocks.check(caller)?;
     check_target(&url, &s.resolver).await?;
     let rate = check_probe(s, caller).await?;
     let found = runner::transcript(&s.cfg, &url, language.as_deref()).await?;

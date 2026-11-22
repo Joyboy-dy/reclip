@@ -11,5 +11,6 @@ pub mod mcp;
 pub mod music;
 pub mod service;
 pub mod store;
+pub mod sysinfo;
 pub mod transcript;
 pub mod ytdlp;

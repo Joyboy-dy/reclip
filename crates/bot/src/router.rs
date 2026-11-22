@@ -36,6 +36,15 @@ pub async fn handle_update<T: Telegram + 'static, C: Core + 'static>(
     app: &Arc<App<T, C>>,
     upd: Update,
 ) {
+    let from = upd
+        .message
+        .as_ref()
+        .and_then(|m| m.from.as_ref())
+        .or(upd.callback_query.as_ref().map(|c| &c.from));
+    if let Some(u) = from {
+        app.core
+            .note_user(u.id, u.username.as_deref(), u.full_name().as_deref());
+    }
     if let Some(msg) = upd.message {
         if msg.chat.kind != ChatKind::Private {
             return; // groups and channels: ignored silently

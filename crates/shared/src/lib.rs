@@ -1,11 +1,13 @@
 //! Types shared between the ReClip API, core and clients.
 
+pub mod activity;
 pub mod admin;
 pub mod api;
 pub mod errors;
 pub mod history;
 pub mod tools;
 
+pub use activity::*;
 pub use admin::*;
 pub use api::*;
 pub use errors::*;

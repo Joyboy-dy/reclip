@@ -1,6 +1,6 @@
 # Tâches de la semaine (23 au 29 novembre 2026) : intégrations musique et suivi admin
 
-Partie musique codée et testée le 22 novembre 2026. Partie admin pas encore commencée. Règle de sélection : on intègre une plateforme seulement si elle marche **sans compte, sans cookie et sans clé d'API**. Sinon, on la met de côté.
+Partie musique, rotation WARP et partie admin codées et testées le 22 novembre 2026. Règle de sélection : on intègre une plateforme seulement si elle marche **sans compte, sans cookie et sans clé d'API**. Sinon, on la met de côté.
 
 ## Deux façons d'obtenir l'audio
 
@@ -63,13 +63,21 @@ But : voir qui utilise reclip (web et Telegram), combien chacun télécharge, re
 Ce qui existe déjà : chaque job enregistre `owner` (`web:<cookie>`, `key:<id>` ou `tg:<id Telegram>`) et `quota_key` (`ip:<adresse>` pour le web, IPv6 regroupé par /64). Les clés d'API ont `last_used_at` et `request_count`, et on peut déjà les révoquer. Il n'existe ni page d'activité ni blocage d'un appareil, d'une IP ou d'un compte Telegram.
 
 ### À faire
-- [ ] Enregistrer pour chaque job : IP, `User-Agent` résumé (navigateur, système, mobile ou ordinateur), source (web, Telegram, clé), taille du fichier et durée du traitement
-- [ ] Côté Telegram : transmettre au cœur le `@username`, le prénom et le nom en plus de l'id (le bot les reçoit à chaque message)
-- [ ] Page admin « Utilisateurs » : un appareil web (cookie) ou un compte Telegram par ligne, avec les IP vues, le nombre de téléchargements (jour, semaine, total), le volume en Go et la dernière activité
-- [ ] Repérer le partage : un même cookie vu depuis beaucoup d'IP, beaucoup de cookies derrière une même IP, des nouveaux appareils qui arrivent d'un coup
-- [ ] Bloquer et débloquer un appareil (cookie), une IP ou plage, ou un compte Telegram, avec un motif. Le blocage refuse les nouvelles analyses et les nouveaux jobs avec un message clair
-- [ ] Page admin « Serveur » : CPU, mémoire, disque utilisé par les fichiers, jobs en cours et en file, débit réseau. Le coût moyen d'un téléchargement (durée, CPU, Go)
-- [ ] Durée de conservation des IP et du journal d'activité (ex. 30 jours), puis purge automatique
+- [x] Enregistrer pour chaque job : IP, `User-Agent` résumé (navigateur, système, mobile ou ordinateur), source (web, Telegram, clé), taille du fichier et durée du traitement
+- [x] Côté Telegram : transmettre au cœur le `@username`, le prénom et le nom en plus de l'id (le bot les reçoit à chaque message)
+- [x] Page admin « Utilisateurs » : un appareil web (cookie) ou un compte Telegram par ligne, avec les IP vues, le nombre de téléchargements (jour, semaine, total), le volume en Go et la dernière activité
+- [x] Repérer le partage : un même cookie vu depuis beaucoup d'IP, beaucoup de cookies derrière une même IP, des nouveaux appareils qui arrivent d'un coup
+- [x] Bloquer et débloquer un appareil (cookie), une IP ou plage, ou un compte Telegram, avec un motif. Le blocage refuse les nouvelles analyses et les nouveaux jobs avec un message clair
+- [x] Page admin « Serveur » : CPU, mémoire, disque utilisé par les fichiers, jobs en cours et en file, débit réseau. Le coût moyen d'un téléchargement (durée, CPU, Go)
+- [x] Durée de conservation des IP et du journal d'activité (ex. 30 jours), puis purge automatique
+
+### Ce qui a été décidé en cours de route
+- Un « utilisateur » web est un navigateur (son cookie). L'IPv6 est regroupée par /64.
+- Signes de partage : 5 adresses ou plus en 24 h pour un navigateur, 4 navigateurs ou plus sur une adresse en 7 jours, 10 nouveaux navigateurs ou plus en une heure. Ce sont des indices affichés, pas des blocages automatiques.
+- Blocage par navigateur, compte Telegram, clé, adresse ou plage (au moins /16 en IPv4, /32 en IPv6). Le motif reste côté admin ; l'utilisateur voit un message neutre (code `blocked`).
+- Le coût CPU par téléchargement est une moyenne depuis le dernier démarrage (temps CPU du cœur et de ses outils / téléchargements finis), pas une mesure par tâche.
+- L'activité suit `RECLIP_HISTORY_DAYS` (30 jours) et est purgée par le nettoyage toutes les 10 minutes.
+- Les pages admin s'ouvrent sur « Users ».
 
 ### Limites à garder en tête
 - Sur le web, on n'obtient pas le nom d'une personne : seulement une IP, un cookie et le navigateur. Une même personne peut changer d'IP (4G) ou vider ses cookies. Le nom n'existe que côté Telegram (et seulement si la personne en a mis un).

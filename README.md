@@ -79,7 +79,7 @@ The downloads directory belongs to ReClip: at startup it deletes the job folders
 
 ### Admin page
 
-Admins sign in at `/admin`. The page is not linked from the site, so share the address only with admins. Set `RECLIP_ADMIN_EMAILS` and `RECLIP_ADMIN_DEFAULT_PASSWORD`: each admin signs in once with the default password and is then asked to choose their own. The admin token and the `reclip-core keys` CLI keep working for scripts. Details (in French) in [deploy/README.md](deploy/README.md).
+Admins sign in at `/admin`. The page is not linked from the site, so share the address only with admins. Set `RECLIP_ADMIN_EMAILS` and `RECLIP_ADMIN_DEFAULT_PASSWORD`: each admin signs in once with the default password and is then asked to choose their own. The admin token and the `reclip-core keys` CLI keep working for scripts. The **Users** page lists every browser, Telegram account and API key with its addresses and downloads, flags signs of a shared link, and blocks a user, an address or a range; **Server** shows the container's load and the average cost of a download. Activity and addresses are deleted after `RECLIP_HISTORY_DAYS`. Details (in French) in [deploy/README.md](deploy/README.md).
 
 ### YouTube on a server
 
@@ -165,6 +165,7 @@ Errors:
 | 401 | `unauthorized` | Invalid, expired or revoked key; no key in private mode; wrong admin token on the admin API. |
 | 403 | `forbidden` | The key lacks the scope, the key cannot act for users (no `delegate`), or a request without a key came with a cross-site or missing `Origin`. |
 | 403 | `forbidden_target` | The URL points to a private or internal address. |
+| 403 | `blocked` | An admin blocked this browser, Telegram account, key or address (`/admin/users`). |
 | 429 | `rate_limited` | Over a limit. `Retry-After` gives the wait in seconds. |
 
 Responses also carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets).

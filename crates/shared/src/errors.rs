@@ -18,6 +18,8 @@ pub enum ErrorCode {
     ForbiddenTarget,
     Unauthorized,
     Forbidden,
+    /// An admin blocked this device, account, key or address.
+    Blocked,
     InvalidRequest,
     Internal,
 }
@@ -28,7 +30,7 @@ impl ErrorCode {
         match self {
             Self::InvalidRequest | Self::UnsupportedUrl => 400,
             Self::Unauthorized => 401,
-            Self::ForbiddenTarget | Self::Forbidden => 403,
+            Self::ForbiddenTarget | Self::Forbidden | Self::Blocked => 403,
             Self::RateLimited => 429,
             Self::Internal => 500,
             _ => 422,

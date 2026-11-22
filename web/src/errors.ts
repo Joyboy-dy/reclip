@@ -13,6 +13,7 @@ const TEXTS: Partial<Record<ErrorCode, string>> = {
   unauthorized: "This server requires an API key",
   forbidden: "This action was refused",
   forbidden_target: "This link points to a private address",
+  blocked: "Access to ReClip was blocked for this device. Contact the site's owner if this is a mistake.",
 };
 
 /** Map a server error code to a user-facing text. */

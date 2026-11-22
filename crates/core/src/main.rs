@@ -43,6 +43,11 @@ async fn main() -> anyhow::Result<()> {
         .context("load server secrets")?;
     let addr = format!("{}:{}", cfg.host, cfg.port);
     let state = AppState::new(Arc::new(cfg), store, site);
+    state
+        .blocks
+        .reload(&state.store)
+        .await
+        .context("load blocks")?;
     let jobs = state.jobs.clone();
     let report = recover(&jobs).await.context("recover jobs")?;
     tracing::info!(

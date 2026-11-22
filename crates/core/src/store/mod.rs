@@ -11,6 +11,8 @@ use serde::de::DeserializeOwned;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
+mod activity;
+pub use activity::{ClientRow, DownloadCosts};
 mod admin;
 pub use admin::AdminAccount;
 mod history;
@@ -30,7 +32,7 @@ const COLUMNS: &str = "id, url, format, format_id, title, thumbnail, state, file
                        strip_metadata, playlist_item";
 
 use time::finished_and_expiry;
-pub use time::{now, now_minus, now_plus};
+pub use time::{now, now_minus, now_plus, timestamp_of};
 
 /// Persistent job storage. Cheap to clone (wraps a connection pool).
 #[derive(Clone)]

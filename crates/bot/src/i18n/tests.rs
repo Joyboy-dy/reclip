@@ -29,6 +29,7 @@ fn every_error_code_has_both_languages() {
         ForbiddenTarget,
         Unauthorized,
         Forbidden,
+        Blocked,
         InvalidRequest,
         Internal,
     ] {

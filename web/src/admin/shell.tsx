@@ -17,6 +17,8 @@ import { routePath } from "./route";
 type NavProps = { layout: Layout; route: Route; email: string; go: (r: Route) => void; onSignOut: () => void };
 
 const LINKS: { route: Route; label: string }[] = [
+  { route: "users", label: "Users" },
+  { route: "server", label: "Server" },
   { route: "keys", label: "API keys" },
   { route: "password", label: "Password" },
 ];

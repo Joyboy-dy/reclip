@@ -82,6 +82,8 @@ pub async fn probe(
 ) -> Result<(ProbeResponse, Option<RateInfo>), ServiceError> {
     let url = validate_url(&req.url)?;
     caller.require(Scope::Probe)?;
+    s.activity.record(&s.store, caller);
+    s.blocks.check(caller)?;
     check_target(&url, &s.resolver).await?;
     let rate = check_probe(s, caller).await?;
     let probed = runner::probe(&s.cfg, &url).await?;
@@ -122,12 +124,19 @@ pub async fn create_job(
     req.url = validate_url(&req.url)?;
     validate_options(&req)?;
     caller.require(Scope::JobsCreate)?;
+    s.activity.record(&s.store, caller);
+    s.blocks.check(caller)?;
     check_target(&req.url, &s.resolver).await?;
     // The cap check and the insert must not interleave with another create
     // for the same quota key.
     let _admission = admission(s, caller).await;
     let rate = check_create(s, caller).await?;
     let job = s.jobs.create(&caller.owner, &caller.quota_key, req).await?;
+    let ip = caller.origin.ip.map(crate::access::activity::ip_text);
+    let device = caller.origin.device.as_deref();
+    if let Err(e) = s.store.set_job_origin(&job.id, ip.as_deref(), device).await {
+        tracing::warn!(job = %job.id, error = %e, "cannot record the job's origin");
+    }
     Ok((job, rate))
 }
 

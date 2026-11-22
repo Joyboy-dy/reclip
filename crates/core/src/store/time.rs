@@ -43,3 +43,8 @@ pub fn now_minus(d: std::time::Duration) -> String {
 fn timestamp(at: chrono::DateTime<chrono::Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
+
+/// `at` in the store's timestamp format.
+pub fn timestamp_of(at: std::time::SystemTime) -> String {
+    timestamp(chrono::DateTime::<chrono::Utc>::from(at))
+}

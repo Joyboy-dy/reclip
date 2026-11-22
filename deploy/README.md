@@ -109,6 +109,21 @@ La page d'administration est sur `/admin`. Elle n'est liée nulle part sur le si
 
 Le jeton admin (`RECLIP_ADMIN_TOKEN`) et la commande `reclip-core keys` restent valables pour les scripts : la page admin ne les remplace pas.
 
+### Utilisateurs et blocage
+
+La page **Users** liste qui utilise ReClip : chaque navigateur (reconnu par son cookie), chaque compte Telegram (avec son `@username` et son nom, transmis par le bot) et chaque clé API. Pour chacun, elle affiche les adresses IP vues, le nombre de téléchargements (24 h, 7 jours, toute la période), le volume et la dernière activité.
+
+- **Signes de partage du lien** : un navigateur vu depuis 5 adresses ou plus en 24 h (« Many addresses »), une adresse utilisée par 4 navigateurs ou plus en 7 jours (« Shared address »), et une vague de nouveaux navigateurs (10 ou plus en une heure). Ce sont des indices, pas des preuves : un foyer, un bureau ou un réseau mobile partagent souvent une adresse.
+- **Bloquer** un navigateur, un compte Telegram, une clé, une adresse ou une plage (`203.0.113.0/24`, au moins /16 en IPv4 et /32 en IPv6). Les nouvelles analyses et les nouveaux téléchargements sont refusés avec un message clair (code `blocked`), sur le site comme dans le bot. Le motif n'est visible que des administrateurs. Les téléchargements déjà lancés se terminent.
+- Sur le web, on ne connaît pas le nom d'une personne : un navigateur dont on efface les cookies devient un nouvel utilisateur, et une même personne peut changer d'adresse (réseau mobile). Pour bloquer quelqu'un durablement, bloquez aussi son adresse ou sa plage.
+- Une adresse IPv6 est regroupée par /64, la plage qu'un appareil utilise en entier.
+
+Les adresses et l'activité sont conservées `RECLIP_HISTORY_DAYS` jours (30 par défaut), puis supprimées par le nettoyage automatique. Les blocages restent jusqu'à ce qu'un administrateur les lève.
+
+### Serveur
+
+La page **Server** montre la charge du conteneur (processeur, mémoire, réseau, lus dans le cgroup et `/proc`), la place prise par les fichiers en attente, les tâches en cours et en file, et le coût moyen d'un téléchargement (durée, temps processeur, taille). Elle se rafraîchit toutes les 5 s tant que l'onglet est ouvert. Rien n'est mesuré en arrière-plan quand personne ne la regarde.
+
 ## Serveur MCP et WebMCP
 
 Le serveur MCP est sur `/mcp` (MCP en HTTP streamable). Il exige une clé API : `Authorization: Bearer rck_…`. Les droits et les limites de la clé sont appliqués comme sur l'API REST. La délégation Telegram n'est pas acceptée sur `/mcp`. Sans clé ou avec une clé invalide ou révoquée, la réponse est `401`.
