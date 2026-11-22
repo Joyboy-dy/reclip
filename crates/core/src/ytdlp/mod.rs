@@ -7,6 +7,7 @@ pub mod finalize;
 pub mod parse;
 pub mod process;
 pub mod progress;
+pub mod rotation;
 pub mod runner;
 pub mod subs;
 

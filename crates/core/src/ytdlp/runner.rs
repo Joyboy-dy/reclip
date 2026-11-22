@@ -3,7 +3,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use reclip_shared::{ApiError, ErrorCode, MediaFormat, ProbeResponse, Transcript};
 use tokio::process::{Child, Command};
@@ -20,6 +20,7 @@ use super::finalize::finalize;
 use super::parse::{is_preview_only, parse_first_json, playlist_info, video_info, x_post_info};
 use super::process::{Captured, capture, spawn_group, terminate};
 use super::progress::{ProgressEvent, parse_line};
+use super::rotation::Rotation;
 use super::subs::{TMP_PREFIX, available, choose, parse_tracks, read_track};
 use crate::config::Config;
 use crate::music;
@@ -95,11 +96,33 @@ fn failure(cfg: &Config, out: &Captured) -> ApiError {
     classify(&out.stderr, cookies_available(cfg))
 }
 
+/// Whether a failed call that began at `started` gets one more try, once
+/// WARP has a new exit (see [`Rotation`]).
+async fn retry_after_rotation(
+    cfg: &Config,
+    err: &ApiError,
+    started: SystemTime,
+    cancel: &CancellationToken,
+) -> bool {
+    let dir = cfg.warp_signal_dir.as_deref();
+    Rotation::shared().recover(dir, err, started, cancel).await
+}
+
 pub async fn probe(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     if music::is_music_link(url) {
         let (platform, fetched) = music::fetch(url).await?;
         return Ok(music::probe_response(platform, fetched, cfg.playlist_limit));
     }
+    let started = SystemTime::now();
+    match probe_once(cfg, url).await {
+        Err(e) if retry_after_rotation(cfg, &e, started, &CancellationToken::new()).await => {
+            probe_once(cfg, url).await
+        }
+        r => r,
+    }
+}
+
+async fn probe_once(cfg: &Config, url: &str) -> Result<ProbeResponse, ApiError> {
     let args = probe_args(cfg, url);
     let never = CancellationToken::new();
     let out = run(cfg, &args, PROBE_TIMEOUT, usize::MAX, |_| {}, &never).await?;
@@ -190,6 +213,20 @@ pub async fn transcript(
     url: &str,
     language: Option<&str>,
 ) -> Result<Transcript, ApiError> {
+    let started = SystemTime::now();
+    match transcript_once(cfg, url, language).await {
+        Err(e) if retry_after_rotation(cfg, &e, started, &CancellationToken::new()).await => {
+            transcript_once(cfg, url, language).await
+        }
+        r => r,
+    }
+}
+
+async fn transcript_once(
+    cfg: &Config,
+    url: &str,
+    language: Option<&str>,
+) -> Result<Transcript, ApiError> {
     let never = CancellationToken::new();
     let meta = run(
         cfg,
@@ -270,7 +307,9 @@ pub async fn download(
     download_with(cfg, job_dir, &opts, url, on_progress, cancel).await
 }
 
-/// [`download`] with the full set of options.
+/// [`download`] with the full set of options. A bot check (or a proxy cut
+/// by a WARP restart) gets one more try on a new exit; the part already
+/// downloaded is kept.
 pub async fn download_with(
     cfg: &Config,
     job_dir: &Path,
@@ -279,9 +318,26 @@ pub async fn download_with(
     mut on_progress: impl FnMut(ProgressEvent) + Send,
     cancel: CancellationToken,
 ) -> Result<PathBuf, ApiError> {
+    let started = SystemTime::now();
+    match download_once(cfg, job_dir, opts, url, &mut on_progress, &cancel).await {
+        Err(e) if retry_after_rotation(cfg, &e, started, &cancel).await => {
+            download_once(cfg, job_dir, opts, url, &mut on_progress, &cancel).await
+        }
+        r => r,
+    }
+}
+
+async fn download_once(
+    cfg: &Config,
+    job_dir: &Path,
+    opts: &DownloadOptions,
+    url: &str,
+    on_progress: &mut (impl FnMut(ProgressEvent) + Send),
+    cancel: &CancellationToken,
+) -> Result<PathBuf, ApiError> {
     // `_info` lives until the download ends: yt-dlp reads it.
     let (args, _info) = if music::is_music_link(url) {
-        let info = music_info_json(cfg, url, &cancel).await?;
+        let info = music_info_json(cfg, url, cancel).await?;
         (
             download_args_from_info(job_dir, opts, cfg, &info),
             Some(info),
@@ -295,7 +351,7 @@ pub async fn download_with(
             on_progress(event);
         }
     };
-    let out = run(cfg, &args, cfg.job_timeout, DOWNLOAD_TAIL, on_line, &cancel).await?;
+    let out = run(cfg, &args, cfg.job_timeout, DOWNLOAD_TAIL, on_line, cancel).await?;
     if !out.status.success() {
         let e = failure(cfg, &out);
         // The `-f` that skips previews leaves nothing for a Go+ track.
@@ -310,7 +366,7 @@ pub async fn download_with(
     // The bytes are all in: show processing while the ffmpeg pass runs, even
     // when yt-dlp printed no postprocessor line (single-file source).
     on_progress(ProgressEvent::Processing);
-    finalize(cfg, &path, opts, &cancel).await?;
+    finalize(cfg, &path, opts, cancel).await?;
     Ok(path)
 }
 

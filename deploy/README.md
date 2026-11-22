@@ -58,7 +58,15 @@ Le service `warp` (profil `warp`) fait sortir le trafic de yt-dlp par le réseau
 
 Gardez `http://` et pas `socks5://` : ffmpeg, qui découpe les extraits (Clip) et certains flux, ne sait pas passer par un proxy SOCKS. Avec `socks5://`, il sort par l'IP du serveur et YouTube répond 403 (« ffmpeg exited with code 8 »).
 
-YouTube peut aussi bloquer certaines adresses de WARP. Dans ce cas, redémarrez le conteneur `warp` (il obtient souvent une autre adresse), ou passez aux cookies. Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
+YouTube peut aussi bloquer certaines adresses de WARP. ReClip s'en occupe tout seul :
+
+1. Quand YouTube répond « not a bot », le cœur dépose un fichier `rotate` dans le volume `warp-signal`, partagé avec le conteneur `warp`.
+2. Le contrôle de santé de `warp` (toutes les 10 s) voit ce fichier et arrête le proxy. Le conteneur s'arrête et Docker le relance (`restart: unless-stopped`), ce qui donne en général une autre adresse Cloudflare. C'est le redémarrage manuel, sans accès au socket Docker.
+3. Une fois WARP reconnecté (fichier `alive` réécrit, 10 à 25 s en tout), le cœur réessaie une fois l'analyse ou le téléchargement. Les téléchargements coupés par le redémarrage reprennent aussi une fois, à partir de la partie déjà téléchargée.
+
+Au plus une rotation toutes les 2 minutes : si la nouvelle adresse est bloquée elle aussi, l'erreur s'affiche comme avant. Passez alors aux cookies. `RECLIP_WARP_SIGNAL_DIR` vide désactive la rotation. Sans le profil `warp`, elle ne fait rien (aucun conteneur ne répond dans le dossier). Les logs du cœur montrent `asking WARP for a new exit`, puis `new WARP exit ready`.
+
+Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
 
 ### Cookies YouTube
 

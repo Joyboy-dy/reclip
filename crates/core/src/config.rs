@@ -82,6 +82,9 @@ pub struct Config {
     pub webmcp_trial_token: Option<String>,
     /// `RECLIP_BOT_KEY_FILE`: where the core writes the Telegram bot key.
     pub bot_key_file: Option<PathBuf>,
+    /// `RECLIP_WARP_SIGNAL_DIR`: folder shared with the `warp` container,
+    /// used to ask for a new Cloudflare exit on a YouTube bot check.
+    pub warp_signal_dir: Option<PathBuf>,
 }
 
 /// Rate limits for one access tier. 0 means unlimited.
@@ -264,6 +267,7 @@ impl Config {
             admin_session_ttl: Duration::from_secs(12 * 3600),
             webmcp_trial_token: get("RECLIP_WEBMCP_TRIAL_TOKEN"),
             bot_key_file: get("RECLIP_BOT_KEY_FILE").map(PathBuf::from),
+            warp_signal_dir: get("RECLIP_WARP_SIGNAL_DIR").map(PathBuf::from),
         }
     }
 }

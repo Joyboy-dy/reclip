@@ -10,6 +10,8 @@ services:
       - data:/data
       # Shared with the bot (read-only there): the core writes the bot API key here.
       - secrets:/run/reclip
+      # Shared with warp: asks for a new Cloudflare exit on a YouTube bot check.
+      - warp-signal:/run/warp-signal
       # YouTube blocks most server IPs ("Sign in to confirm you're not a bot").
       # Export cookies.txt from a logged-in browser, put it next to this file,
       # uncomment the line below and set RECLIP_COOKIES=/run/secrets/cookies.txt.
@@ -65,6 +67,9 @@ services:
       # The bot service reads the same file.
       RECLIP_BOT_KEY_FILE: ${RECLIP_BOT_KEY_FILE-/run/reclip/bot.key}
       RECLIP_NO_UPDATE: ${RECLIP_NO_UPDATE:-}
+      # No colon on purpose: set but empty turns the WARP rotation off. Inert
+      # without the warp profile (nothing answers in the folder).
+      RECLIP_WARP_SIGNAL_DIR: ${RECLIP_WARP_SIGNAL_DIR-/run/warp-signal}
       RUST_LOG: ${RUST_LOG:-info}
       TZ: ${TZ:-UTC}
 
@@ -120,9 +125,32 @@ services:
       net.ipv4.conf.all.src_valid_mark: "1"
     volumes:
       - warp-data:/var/lib/cloudflare-warp
+      - warp-signal:/run/warp-signal
     restart: unless-stopped
     environment:
       WARP_SLEEP: ${WARP_SLEEP:-2}
+    # The image's own check (WARP connected), plus the core's requests for a
+    # new exit (crates/core/src/ytdlp/rotation.rs). On `rotate`, it stops the
+    # proxy (gost, the entrypoint's last command): the container exits and
+    # Docker restarts it, which usually brings another Cloudflare address,
+    # like a manual restart. `alive` tells the core that WARP is connected.
+    # No Docker socket needed. `$$` is a literal `$` for compose.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          d=/run/warp-signal;
+          [ -w "$$d" ] || sudo chmod 0777 "$$d";
+          if [ -e "$$d/rotate" ]; then
+          rm -f "$$d/rotate" "$$d/alive";
+          for p in /proc/[0-9]*; do [ "$$(cat "$$p/comm" 2>/dev/null)" = gost ] && kill "$${p#/proc/}"; done;
+          exit 1;
+          fi;
+          /healthcheck/index.sh && touch "$$d/alive"
+      interval: 10s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
 
   # Local Bot API server: lifts the upload limit from 50 MB to 2000 MB.
   # Set TELEGRAM_API_URL=http://telegram-bot-api:8081 for the bot.
@@ -150,3 +178,4 @@ volumes:
   bot-data:
   tg-data:
   warp-data:
+  warp-signal:
