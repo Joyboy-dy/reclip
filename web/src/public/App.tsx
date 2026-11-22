@@ -43,6 +43,9 @@ function DownloadAll({ phone }: { phone?: boolean }) {
   );
 }
 
+/** The fetch shortcut as this keyboard writes it. */
+const FETCH_KEYS = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘+Enter" : "Ctrl+Enter";
+
 function Desktop({ links }: { links: Links }) {
   const cards = usePage((s) => s.cards);
   return (
@@ -54,8 +57,9 @@ function Desktop({ links }: { links: Links }) {
         <p className="m-0 mt-2.5 text-xs tracking-[0.04em] text-muted uppercase">Free media downloader</p>
       </div>
       <LinkBox links={links} />
-      <p className="m-0 mb-[18px] text-[11px] leading-[1.5] text-muted">Multiple links? Separate with spaces, commas, or newlines.</p>
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
+      <p className="m-0 mb-[18px] text-[11px] leading-[1.5] text-muted">One link per line, or separated by spaces. {FETCH_KEYS} to fetch.</p>
+      {/* One row; the format segments are as wide in both modes, so Fetch never moves. */}
+      <div className="mb-3 flex items-center gap-2.5">
         <MediaControls />
         <FetchButton links={links} />
       </div>

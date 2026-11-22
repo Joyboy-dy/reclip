@@ -8,6 +8,8 @@ use axum::routing::{any, delete, get, post};
 use axum::{Router, middleware};
 use tower_http::services::ServeDir;
 
+use crate::access::activity::Activity;
+use crate::access::blocks::Blocks;
 use crate::access::caller::caller_layer;
 use crate::access::key_usage::KeyUsage;
 use crate::access::limits::Limiter;
@@ -34,6 +36,12 @@ pub struct AppState {
     pub site: Site,
     /// DNS resolver used by the SSRF guard; tests swap in a static one.
     pub resolver: Resolver,
+    /// Who calls, for the admin's activity view.
+    pub activity: Activity,
+    /// Blocked identities and addresses; load them with `Blocks::reload`.
+    pub blocks: Blocks,
+    /// Previous load sample of the admin's server view.
+    pub load: crate::http::admin_stats::LoadSampler,
 }
 
 impl AppState {
@@ -48,6 +56,9 @@ impl AppState {
             key_usage: KeyUsage::default(),
             site,
             resolver: system_resolver(),
+            activity: Activity::default(),
+            blocks: Blocks::default(),
+            load: Default::default(),
         }
     }
 }

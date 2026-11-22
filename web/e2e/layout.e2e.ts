@@ -11,7 +11,7 @@ test("no horizontal overflow, empty and with cards", async ({ page }) => {
   await page.getByRole("checkbox", { name: "Clip" }).click();
   await expectNoOverflow(page);
   await page.getByRole("radio", { name: "Audio" }).click();
-  await expect(page.getByRole("radio", { name: "FLAC" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "More audio formats" })).toBeVisible();
   await expectNoOverflow(page);
   await card.getByRole("button", { name: /^Download/ }).click();
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
@@ -33,8 +33,14 @@ test("phone layout below 560 px, desktop layout above", async ({ page }) => {
     expect((await fetch.boundingBox())?.height).toBe(48);
     expect((await page.getByRole("radio", { name: "Video" }).boundingBox())?.height).toBe(44);
   } else {
-    // Fetch shares the controls row with the segments.
-    expect(width).toBeLessThan(560);
+    // Fetch shares the row with the segments, as tall as them, and does not
+    // move when Video / Audio swaps the format segments.
+    const media = await page.locator('[aria-label="Media"]').boundingBox();
+    const before = await fetch.boundingBox();
+    expect(before?.height).toBeCloseTo(media?.height ?? 0, 0);
+    expect(Math.abs((before?.y ?? 0) - (media?.y ?? 0))).toBeLessThan(1);
+    await page.getByRole("radio", { name: "Audio" }).click();
+    expect(await fetch.boundingBox()).toEqual(before);
   }
   await expect(cards(page)).toHaveCount(0);
 });

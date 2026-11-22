@@ -93,12 +93,19 @@ pub(super) async fn run(mgr: JobManager, job: Job, cancel: CancellationToken) {
         panic!("injected worker panic");
     }
     let dir = mgr.config().downloads_dir.join(&job.id);
+    let started = std::time::Instant::now();
     let outcome = if cancel.is_cancelled() {
         Err(cancelled())
     } else {
         download(&mgr, &job, &dir, &cancel).await
     };
+    let id = job.id.clone();
     finish(&mgr, job, &dir, outcome).await;
+    // The admin's average cost of a download.
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    if let Err(e) = mgr.store().set_job_duration(&id, ms).await {
+        tracing::warn!(job = %id, error = %e, "cannot record the job's duration");
+    }
     // Before the slot is freed: the next `schedule` sees this job's files.
     mgr.refresh_disk().await;
     release.recorded = true;

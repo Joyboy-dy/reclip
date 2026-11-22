@@ -157,6 +157,29 @@ async fn mp3_creates_job() {
 }
 
 #[tokio::test]
+async fn music_track_goes_straight_to_mp3() {
+    let url = "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT";
+    let core = FakeCore::default();
+    let ProbeResponse::Video(mut track) = video("Never Gonna Give You Up", None, &[]) else {
+        unreachable!()
+    };
+    track.audio_only = true;
+    track.matched_from = Some("Spotify".into());
+    core.probe(url, Ok(ProbeResponse::Video(track)));
+    core.script(vec![
+        job("x", JobState::Queued, None, None),
+        job("x", JobState::Cancelled, None, None),
+    ]);
+    let e = env(core);
+    // Even `/mp4` cannot make a video of it.
+    send(&e.app, text_update(1, 5, "en", &format!("/mp4 {url}"))).await;
+    let created = e.app.core.created.lock().unwrap().clone();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].1.format, MediaFormat::Mp3);
+    assert_eq!(created[0].1.url, url);
+}
+
+#[tokio::test]
 async fn other_users_cannot_press_buttons() {
     let core = core_with_video(None);
     core.script(vec![job("x", JobState::Downloading, Some(10.0), None)]);

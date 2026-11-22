@@ -237,6 +237,10 @@ pub fn error(l: Lang, code: ErrorCode, retry_after: Option<u64>) -> String {
             "Le bot n'est pas autorisé à utiliser ReClip. Préviens l'administrateur.",
             "The bot is not allowed to use ReClip. Tell the administrator.",
         ),
+        ErrorCode::Blocked => (
+            "Ton accès à ReClip a été bloqué par l'administrateur.",
+            "Your access to ReClip was blocked by the administrator.",
+        ),
         ErrorCode::InvalidRequest => ("Demande invalide.", "Invalid request."),
         ErrorCode::Internal => (
             "Erreur interne. Réessaie plus tard.",

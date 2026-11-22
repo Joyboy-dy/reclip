@@ -55,11 +55,50 @@ async fn probe_video() {
 }
 
 #[tokio::test]
+async fn a_list_without_list_param_is_a_playlist() {
+    // A SoundCloud set or a Bandcamp album: yt-dlp says `_type: playlist`.
+    let r = probe(&fake(), "https://soundcloud.com/a/sets/b")
+        .await
+        .unwrap();
+    assert!(matches!(r, ProbeResponse::Playlist(p) if p.entries.len() == 3));
+}
+
+#[tokio::test]
 async fn probe_playlist() {
     let ProbeResponse::Playlist(p) = probe(&fake(), "https://ok?list=PL1").await.unwrap() else {
         panic!("expected playlist")
     };
     assert_eq!(p.entries.len(), 3);
+}
+
+/// With WARP watching the signal folder, a bot check asks for a new exit,
+/// waits for it, then probes once more (still blocked here: the error stays).
+#[tokio::test]
+async fn bot_check_rotates_warp_then_retries_once() {
+    let signal = tempfile::tempdir().unwrap();
+    let dir = signal.path().to_path_buf();
+    std::fs::write(dir.join("alive"), b"").unwrap();
+    let mut c = fake();
+    c.warp_signal_dir = Some(dir.clone());
+    // The warp healthcheck: takes the request, restarts, reports a new exit.
+    let warp = tokio::spawn(async move {
+        while !dir.join("rotate").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        std::fs::remove_file(dir.join("alive")).unwrap();
+        std::fs::remove_file(dir.join("rotate")).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        std::fs::write(dir.join("alive"), b"").unwrap();
+        Instant::now()
+    });
+    let e = probe(&c, "https://error-bot").await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::BotCheck);
+    let rotated = tokio::time::timeout(Duration::from_secs(1), warp)
+        .await
+        .expect("a rotation was asked")
+        .unwrap();
+    assert!(rotated.elapsed() < Duration::from_secs(5));
+    assert!(!signal.path().join("rotate").exists());
 }
 
 #[tokio::test]

@@ -54,6 +54,17 @@ fn generate() -> String {
         decl::<HistoryCleanResult>(&cfg),
         decl::<TranscriptRequest>(&cfg),
         decl::<Transcript>(&cfg),
+        decl::<ClientKind>(&cfg),
+        decl::<ClientFlag>(&cfg),
+        decl::<SeenIp>(&cfg),
+        decl::<BlockKind>(&cfg),
+        decl::<BlockInfo>(&cfg),
+        decl::<BlockList>(&cfg),
+        decl::<CreateBlockRequest>(&cfg),
+        decl::<ClientInfo>(&cfg),
+        decl::<SharedIp>(&cfg),
+        decl::<ActivityReport>(&cfg),
+        decl::<ServerStats>(&cfg),
     ] {
         out.push('\n');
         out.push_str(&d);

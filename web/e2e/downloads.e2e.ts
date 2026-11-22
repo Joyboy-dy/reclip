@@ -11,7 +11,7 @@ test("paste, fetch and download mp3", async ({ page }) => {
   await page.locator("#urls").fill("https://93.184.216.34/ok");
   await page.getByRole("button", { name: "Fetch" }).click();
   const card = cards(page).first();
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
   await expect(card).toContainText(".mp3");
 });
@@ -24,7 +24,7 @@ test("clip, metadata and container are sent with the job", async ({ page }) => {
   await page.getByLabel("to", { exact: true }).fill("2:05");
   await page.getByRole("checkbox", { name: "Remove metadata" }).click();
   const create = page.waitForRequest((r) => r.url().endsWith("/api/v1/jobs") && r.method() === "POST");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   expect((await create).postDataJSON()).toMatchObject({ format: "mkv", clip: { start: 80, end: 125 }, strip_metadata: true });
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
   await expect(card).toContainText("metadata removed", { ignoreCase: true });
@@ -32,7 +32,7 @@ test("clip, metadata and container are sent with the job", async ({ page }) => {
 
 test("progress survives a refresh", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await expect.poll(async () => (await apiJobs(page)).some((j) => (j.progress ?? 0) > 0)).toBe(true);
   // Computed width (what the user sees), not just the inline value.
   await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);
@@ -45,7 +45,7 @@ test("progress survives a refresh", async ({ page }) => {
 
 test("cancel a running download", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await card.getByRole("button", { name: "Cancel" }).click();
   await expect(card).toContainText(/cancel/i);
   await expect(card.getByRole("button", { name: "Remove" })).toBeVisible();
@@ -53,7 +53,7 @@ test("cancel a running download", async ({ page }) => {
 
 test("remove a finished download", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/ok");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
   await card.getByRole("button", { name: "Remove" }).click();
   await expect(cards(page)).toHaveCount(0);
@@ -75,7 +75,7 @@ test("clean up menu opens with its four actions", async ({ page }) => {
 
 test("a finished download is listed in the history with Save, and can be removed", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/ok");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await expect(card.getByRole("link", { name: "Save" })).toBeVisible();
   const row = page.locator("[data-history-row]").first();
   await expect(row.getByRole("link", { name: "Save" })).toBeVisible();
@@ -85,7 +85,7 @@ test("a finished download is listed in the history with Save, and can be removed
 
 test("a cancelled download resumes", async ({ page }) => {
   const card = await fetchUrl(page, "https://93.184.216.34/slow");
-  await card.getByRole("button", { name: "Download", exact: true }).click();
+  await card.getByRole("button", { name: /^Download/ }).click();
   await expect.poll(() => fillWidth(page)).toBeGreaterThan(0);
   await card.getByRole("button", { name: "Cancel" }).click();
   await expect(card).toContainText("Resume keeps the part already downloaded");

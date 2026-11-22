@@ -43,6 +43,25 @@ pub struct User {
     pub id: i64,
     #[serde(default)]
     pub language_code: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+}
+
+impl User {
+    /// "First Last", or whichever part is set.
+    pub fn full_name(&self) -> Option<String> {
+        let name = [self.first_name.as_deref(), self.last_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let name = name.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -126,6 +126,11 @@ impl JobManager {
         }
     }
 
+    /// Size of the job directories at the last measure.
+    pub fn disk_bytes(&self) -> u64 {
+        self.inner.disk.bytes()
+    }
+
     /// Whether the cached size is over `max_disk`.
     pub(super) fn disk_full(&self) -> bool {
         self.inner.disk.bytes() > self.config().max_disk

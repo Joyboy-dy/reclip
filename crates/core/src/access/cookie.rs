@@ -102,6 +102,7 @@ pub fn visitor_caller(
         scopes: Scope::default_set(),
         limits: Some(s.cfg.limits.web),
         key_id: None,
+        origin: Default::default(),
     };
     Ok((caller, minted.then_some(value)))
 }

@@ -20,16 +20,33 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/v1/admin/keys", get(list).post(create))
         .route("/api/v1/admin/keys/{id}", delete(revoke))
+        .route("/api/v1/admin/activity", get(super::admin_activity::report))
+        .route(
+            "/api/v1/admin/blocks",
+            get(super::admin_activity::list_blocks).post(super::admin_activity::block),
+        )
+        .route(
+            "/api/v1/admin/blocks/{id}",
+            delete(super::admin_activity::unblock),
+        )
+        .route("/api/v1/admin/server", get(super::admin_stats::server))
         .route_layer(middleware::from_fn_with_state(state, admin_layer))
 }
+
+/// The signed-in admin's email (`None` with the admin token), for handlers.
+#[derive(Debug, Clone)]
+pub struct AdminWho(pub Option<String>);
 
 /// `Authorization: Bearer <admin token>`, or an admin session cookie (with a
 /// same-site `Origin` on requests that change something and no pending
 /// password change), or 401. Never cached.
 async fn admin_layer(State(s): State<AppState>, req: Request, next: Next) -> Response {
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
     let mut res = match authorize(&s, &parts).await {
-        Ok(()) => next.run(Request::from_parts(parts, body)).await,
+        Ok(who) => {
+            parts.extensions.insert(AdminWho(who));
+            next.run(Request::from_parts(parts, body)).await
+        }
         Err(res) => res,
     };
     res.headers_mut()
@@ -37,11 +54,11 @@ async fn admin_layer(State(s): State<AppState>, req: Request, next: Next) -> Res
     res
 }
 
-async fn authorize(s: &AppState, parts: &Parts) -> Result<(), Response> {
+async fn authorize(s: &AppState, parts: &Parts) -> Result<Option<String>, Response> {
     let invalid = || unauthorized("Invalid admin token");
     if let Some(auth) = parts.headers.get(AUTHORIZATION) {
         let ok = bearer(auth).is_some_and(|t| s.site.is_admin(t));
-        return if ok { Ok(()) } else { Err(invalid()) };
+        return if ok { Ok(None) } else { Err(invalid()) };
     }
     let session = session_of(s, &parts.headers)
         .await
@@ -51,7 +68,7 @@ async fn authorize(s: &AppState, parts: &Parts) -> Result<(), Response> {
     if session.account.must_change {
         return Err(must_change_error());
     }
-    Ok(())
+    Ok(Some(session.account.email))
 }
 
 async fn create(

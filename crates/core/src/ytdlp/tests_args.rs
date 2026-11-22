@@ -258,3 +258,59 @@ fn playlist_only_links_are_recognised() {
         assert!(!is_playlist_only(no), "{no}");
     }
 }
+
+#[test]
+fn audio_gets_tags_and_cover_unless_stripped() {
+    let a = run(&DownloadOptions::new(MediaFormat::Mp3), "u");
+    assert!(a.contains(&"--embed-metadata".into()) && a.contains(&"--embed-thumbnail".into()));
+    assert!(a.iter().any(|x| x.contains("scale=600:600")));
+    // WAV holds tags but no picture.
+    let w = run(&DownloadOptions::new(MediaFormat::Wav), "u");
+    assert!(w.contains(&"--embed-metadata".into()) && !w.contains(&"--embed-thumbnail".into()));
+    let stripped = DownloadOptions {
+        strip_metadata: true,
+        ..DownloadOptions::new(MediaFormat::Mp3)
+    };
+    let s = run(&stripped, "u");
+    assert!(!s.contains(&"--embed-metadata".into()) && !s.contains(&"--embed-thumbnail".into()));
+    let v = run(&mp4(), "u");
+    assert!(!v.contains(&"--embed-metadata".into()));
+    assert!(v.iter().any(|x| x.ends_with("scale=160:-2")));
+}
+
+#[test]
+fn youtube_music_covers_are_square() {
+    let a = run(
+        &DownloadOptions::new(MediaFormat::Mp3),
+        "https://music.youtube.com/watch?v=a",
+    );
+    assert!(a.iter().any(|x| x.ends_with("crop=ih:ih,scale=600:600")));
+}
+
+#[test]
+fn original_keeps_the_source_codec() {
+    let a = run(&DownloadOptions::new(MediaFormat::Original), "u");
+    assert!(has(&a, ["--audio-format", "best"]));
+}
+
+#[test]
+fn soundcloud_skips_go_plus_previews() {
+    let a = run(
+        &DownloadOptions::new(MediaFormat::Mp3),
+        "https://soundcloud.com/a/b",
+    );
+    assert!(has(&a, ["-f", "ba[format_id!*=preview]"]));
+    assert!(!run(&DownloadOptions::new(MediaFormat::Mp3), "u").contains(&"-f".into()));
+}
+
+#[test]
+fn info_json_replaces_the_url() {
+    let a = super::args::download_args_from_info(
+        Path::new("/d"),
+        &DownloadOptions::new(MediaFormat::Mp3),
+        &cfg(),
+        Path::new("/tmp/i.json"),
+    );
+    assert_eq!(a[a.len() - 2..], ["--load-info-json", "/tmp/i.json"]);
+    assert!(!a.contains(&"--".into()));
+}

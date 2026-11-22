@@ -3,13 +3,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { fileUrl } from "../api/client";
 import { type Card, canRetry } from "../state";
-import { ActionError, isAudioCard, noteError, useQualities } from "./Card";
+import { ActionError, DownloadButton, MetaLine, isAudioCard, noteError, useCardFormat, useDownloadLabel, useQualities } from "./Card";
 import { cardTitle, phaseOf, phoneMeta, stoppedNote, waitLeft } from "./describe";
 import { cancel, download, pickFormat, remove, resume } from "./downloads";
 import { formatProgress, progressWidth } from "./format";
 import { ClockIcon } from "./icons";
 import { Chips, ProgressBar, Thumb, useTick } from "./parts";
-import { usePage } from "./store";
 
 /** .m-btn, 8 px radius: 44 px, the smallest phone touch target. */
 const mBtn = "h-11 rounded-lg px-4 text-xs tracking-[0.04em]";
@@ -19,7 +18,7 @@ const Two = ({ children }: { children: ReactNode }) => <div className="grid grid
 /** One link on a phone (.m-card): head, then a full-width action row. */
 export function PhoneCard({ c }: { c: Card }) {
   const phase = phaseOf(c);
-  const media = usePage((s) => s.options.media);
+  const format = useCardFormat(c);
   useTick(phase === "waiting");
   const failed = phase === "info-error";
   return (
@@ -27,8 +26,8 @@ export function PhoneCard({ c }: { c: Card }) {
       <div className="flex items-center gap-3">
         <Thumb
           src={c.thumbnail ?? c.info?.thumbnail}
-          audio={isAudioCard(c, media)}
-          className={cn("h-16 w-24 rounded-lg", phase === "loading" && "animate-pulse")}
+          audio={isAudioCard(c, format)}
+          className={cn("h-16 rounded-lg", c.info?.audio_only ? "w-16" : "w-24", phase === "loading" && "animate-pulse")}
         />
         <div className="min-w-0 flex-1">
           {phase === "loading" ? (
@@ -42,7 +41,11 @@ export function PhoneCard({ c }: { c: Card }) {
               <div className={cn("line-clamp-2 font-serif text-[16px] leading-[1.25]", failed && "text-error")}>
                 {failed ? "Could not fetch video" : cardTitle(c)}
               </div>
-              <div className="mt-1 truncate text-[11px] tracking-[0.03em] text-muted uppercase">{failed ? c.error : phoneMeta(c)}</div>
+              {failed ? (
+                <div className="mt-1 truncate text-[11px] tracking-[0.03em] text-muted uppercase">{c.error}</div>
+              ) : (
+                <MetaLine c={c} text={phoneMeta(c)} className="mt-1" />
+              )}
             </>
           )}
         </div>
@@ -55,9 +58,9 @@ export function PhoneCard({ c }: { c: Card }) {
 function Body({ c }: { c: Card }) {
   const qualities = useQualities(c, true);
   const phase = phaseOf(c);
+  const label = useDownloadLabel(c, qualities.find((f) => f.id === c.selectedFormat)?.label);
   switch (phase) {
     case "ready": {
-      const label = qualities.find((f) => f.id === c.selectedFormat)?.label;
       return (
         <>
           {qualities.length > 0 && (
@@ -69,9 +72,7 @@ function Body({ c }: { c: Card }) {
               chipClassName="h-11 flex-none px-3 py-0"
             />
           )}
-          <Button type="button" className={mBtn} onClick={() => void download(c.key)}>
-            {label ? `Download ${label}` : "Download"}
-          </Button>
+          <DownloadButton c={c} label={label} full className={cn(mBtn, "flex-1")} menuClassName="h-11 w-11 rounded-lg px-0" />
           {c.error && <span className={noteError}>{c.error}</span>}
         </>
       );

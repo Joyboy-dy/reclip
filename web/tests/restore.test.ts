@@ -45,7 +45,7 @@ test("restored failed job can be retried with its own format and quality", () =>
 
 test("probed card follows the format toggle", () => {
   const c = { key: "k", url: "https://y", status: "error" as const, selectedFormat: "22",
-    info: { title: "P", thumbnail: null, duration: null, uploader: null, formats: [] } };
+    info: { title: "P", thumbnail: null, duration: null, uploader: null, formats: [], audio_only: false } };
   expect(jobRequest(c, { format: "mp3", strip: true })).toEqual({ url: "https://y", format: "mp3", title: "P", strip_metadata: true });
   expect(canRetry({ key: "n", url: "https://z", status: "error" })).toBe(false);
 });
@@ -59,7 +59,7 @@ test("restored job keeps its own clip and metadata choice", () => {
 
 test("probed card takes the page clip, metadata choice and container", () => {
   const c = { key: "k", url: "https://y", status: "ready" as const, selectedFormat: "22",
-    info: { title: "P", thumbnail: null, duration: null, uploader: null, formats: [] } };
+    info: { title: "P", thumbnail: null, duration: null, uploader: null, formats: [], audio_only: false } };
   expect(jobRequest(c, { format: "mov", clip: { start: 80, end: 125 }, strip: true })).toMatchObject({
     format: "mov", format_id: "22", clip: { start: 80, end: 125 }, strip_metadata: true,
   });

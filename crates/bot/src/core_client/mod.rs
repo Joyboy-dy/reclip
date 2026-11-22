@@ -3,6 +3,7 @@
 mod error;
 mod part;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -18,6 +19,9 @@ use tokio::io::AsyncWriteExt;
 
 /// The core calls the bot uses. `user` is the Telegram user id.
 pub trait Core: Send + Sync {
+    /// The user's `@username` and name, passed to the core with their next
+    /// calls (the admin's view of who uses the bot).
+    fn note_user(&self, _user: i64, _username: Option<&str>, _name: Option<&str>) {}
     fn config(&self) -> impl Future<Output = Result<PublicConfig, CoreError>> + Send;
     fn probe(
         &self,
@@ -70,6 +74,30 @@ pub struct HttpCore {
     key: RwLock<String>,
     /// Where the key came from: read again when the core refuses it.
     key_file: Option<PathBuf>,
+    /// `@username` and name of each user, as last seen.
+    profiles: RwLock<HashMap<i64, Profile>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Profile {
+    username: Option<String>,
+    name: Option<String>,
+}
+
+/// Users whose profile is kept; past it the map starts again.
+const MAX_PROFILES: usize = 10_000;
+
+/// Percent-encoding of a header value: UTF-8 names are not valid headers.
+fn encode_header(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 impl HttpCore {
@@ -84,6 +112,7 @@ impl HttpCore {
             base: base.trim_end_matches('/').into(),
             key: RwLock::new(key.into()),
             key_file: None,
+            profiles: RwLock::default(),
         })
     }
 
@@ -128,6 +157,15 @@ impl HttpCore {
             .timeout(Duration::from_secs(60));
         if let Some(u) = user {
             r = r.header("X-Reclip-On-Behalf-Of", format!("tg:{u}"));
+            let profiles = self.profiles.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(p) = profiles.get(&u) {
+                if let Some(name) = &p.username {
+                    r = r.header("X-Reclip-Tg-Username", name.as_str());
+                }
+                if let Some(name) = &p.name {
+                    r = r.header("X-Reclip-Tg-Name", encode_header(name));
+                }
+            }
         }
         r
     }
@@ -219,6 +257,26 @@ impl HttpCore {
 }
 
 impl Core for HttpCore {
+    fn note_user(&self, user: i64, username: Option<&str>, name: Option<&str>) {
+        // Telegram usernames are ASCII letters, digits and `_`.
+        let username = username
+            .filter(|u| (1..=32).contains(&u.len()))
+            .filter(|u| u.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+            .map(String::from);
+        let fresh = Profile {
+            username,
+            name: name.map(|n| n.chars().take(64).collect()),
+        };
+        let mut profiles = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+        if profiles.get(&user) == Some(&fresh) {
+            return;
+        }
+        if profiles.len() >= MAX_PROFILES {
+            profiles.clear();
+        }
+        profiles.insert(user, fresh);
+    }
+
     async fn config(&self) -> Result<PublicConfig, CoreError> {
         self.json(|| self.req(Method::GET, "/config", None)).await
     }

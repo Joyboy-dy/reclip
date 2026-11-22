@@ -56,6 +56,8 @@ pub fn video(title: &str, thumb: Option<&str>, heights: &[u32]) -> ProbeResponse
                 codec: None,
             })
             .collect(),
+        audio_only: false,
+        matched_from: None,
     })
 }
 

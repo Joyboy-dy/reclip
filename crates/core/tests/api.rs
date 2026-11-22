@@ -250,6 +250,19 @@ async fn legacy_ownerless_jobs_are_unreachable() {
 }
 
 #[tokio::test]
+async fn music_links_are_audio_only() {
+    let s = start().await;
+    let body = json!({"url": "https://open.spotify.com/track/abc", "format": "mp4"});
+    let r = s.post("/api/v1/jobs", body).await;
+    assert_eq!(r.status(), 400);
+    let b: Value = r.json().await.unwrap();
+    assert_eq!(
+        b["message"],
+        "Music links are audio only: pick an audio format"
+    );
+}
+
+#[tokio::test]
 async fn rejects_bad_clip_and_playlist_item() {
     let s = start().await;
     let cases = [

@@ -282,3 +282,23 @@ async fn transport_error_hides_url() {
     assert_eq!(e.status, 0);
     assert!(!e.message.contains("127.0.0.1"));
 }
+
+#[tokio::test]
+async fn the_telegram_profile_goes_with_the_user_calls() {
+    let (server, core) = setup().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/probe"))
+        .and(header("x-reclip-tg-username", "jean_d"))
+        .and(header("x-reclip-tg-name", "Jos%C3%A9%20D"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "kind": "video", "title": "T", "thumbnail": null, "duration": 1.0,
+            "uploader": null, "formats": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    core.note_user(7, Some("jean_d"), Some("José D"));
+    // Another user's profile is never sent for this one.
+    core.note_user(8, Some("other"), None);
+    core.probe(7, "https://v/1").await.unwrap();
+}

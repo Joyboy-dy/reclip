@@ -1,5 +1,5 @@
 import { ApiFailure, cancelJob, createJob, deleteJob, fileUrl, listJobs, probe, resumeJob } from "../api/client";
-import type { Job } from "../api/types.gen";
+import type { Job, MediaFormat } from "../api/types.gen";
 import { errorText } from "../errors";
 import { cappedFollower } from "../live-slots";
 import { followJob, pollFollow } from "../progress";
@@ -8,6 +8,7 @@ import {
   type Card,
   type JobOptions,
   applyJob,
+  cardFormat,
   cardFromJob,
   defaultFormat,
   entryCard,
@@ -18,7 +19,7 @@ import {
 import { agentJobIds, rememberAgentJob } from "./agentJobs";
 import { clipFromInput } from "./format";
 import { loadHistory } from "./history";
-import { findCard, store, updateCard } from "./store";
+import { findCard, setOptions, store, updateCard } from "./store";
 
 /** The API error code of a failure, when the server sent one. */
 const errorCodeOf = (err: unknown): string | undefined => (err instanceof ApiFailure ? err.code : undefined);
@@ -44,7 +45,7 @@ function optionsFor(c: Card, override?: JobOptions): { opts?: JobOptions; error?
   // An agent card retried from the page keeps the agent's own options.
   if (c.autoSave === false && c.format !== undefined) return { opts: { format: c.format, clip: c.clip, strip: c.strip ?? false } };
   const o = store.get().options;
-  const format = o.media === "video" ? o.container : o.audio;
+  const format = cardFormat(c, o);
   if (!followsPageOptions(c)) return { opts: { format, strip: o.strip } };
   const { clip, error } = clipFromInput({ on: o.clipOn, from: o.clipFrom, to: o.clipTo });
   if (error) return { error };
@@ -203,6 +204,11 @@ export const pickFormat = (key: string, formatId: string): void => {
   updateCard(key, (c) => (c.selectedFormat = formatId));
 };
 
+/** Download this card in `format`, whatever the page's choice. */
+export const pickCardFormat = (key: string, format: MediaFormat): void => {
+  updateCard(key, (c) => (c.pick = format));
+};
+
 /** Probe a card's link: a video becomes ready, a playlist is replaced by one card per entry. */
 async function probeCard(key: string, depth = 0): Promise<void> {
   const url = findCard(key)?.url;
@@ -230,9 +236,14 @@ async function probeCard(key: string, depth = 0): Promise<void> {
 export async function fetchLinks(urls: string[]): Promise<boolean> {
   if (!urls.length) return false;
   const fresh: Card[] = urls.map((url) => ({ key: newKey(), url, status: "loading" }));
-  store.set((s) => ({ busy: true, cards: [...fresh, ...s.cards.filter((c) => c.jobId || c.status === "downloading" || (c.autoSave === false && c.status !== "info-error"))] }));
+  const kept = store.get().cards.filter((c) => c.jobId || c.status === "downloading" || (c.autoSave === false && c.status !== "info-error"));
+  store.set({ busy: true, cards: [...fresh, ...kept] });
   for (const c of fresh) await probeCard(c.key);
   store.set({ busy: false });
+  // Only music came back (playlist entries included): show the audio formats.
+  const old = new Set(kept.map((c) => c.key));
+  const ready = store.get().cards.filter((c) => !old.has(c.key) && c.status === "ready");
+  if (ready.length > 0 && ready.every((c) => c.info?.audio_only)) setOptions({ media: "audio" });
   return store.get().cards.some((c) => c.status === "ready");
 }
 

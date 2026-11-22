@@ -74,6 +74,34 @@ function DropdownMenuCheckboxItem({
   );
 }
 
+const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+
+/** A single choice, marked like the checkbox item. */
+function DropdownMenuRadioItem({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  return (
+    <DropdownMenuPrimitive.RadioItem
+      data-slot="dropdown-menu-radio-item"
+      className={cn(
+        "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-xs text-fg outline-none",
+        "data-[highlighted]:bg-line-soft data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        className,
+      )}
+      {...props}
+    >
+      <span className="flex w-3.5 shrink-0 justify-center text-accent">
+        <DropdownMenuPrimitive.ItemIndicator>
+          <Check className="size-3.5" />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+      {children}
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
 function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
   return <DropdownMenuPrimitive.Label className={cn("px-2.5 py-1.5 text-[11px] text-muted", className)} {...props} />;
 }
@@ -89,6 +117,8 @@ export {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
 };

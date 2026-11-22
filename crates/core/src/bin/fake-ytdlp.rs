@@ -83,7 +83,8 @@ fn main() {
         subtitles(&args, &url, template.expect("-o template"));
         return;
     }
-    if flag("-j") {
+    let list = url.contains("list") || url.contains("/sets/");
+    if flag("-j") || (flag("-J") && !list) {
         println!("WARNING: noise");
         println!(
             "{}",
@@ -106,6 +107,7 @@ fn main() {
         println!(
             "{}",
             serde_json::json!({
+                "_type": "playlist",
                 "title": "Fake playlist",
                 "entries": [
                     {"url": "https://ok/1"}, {"url": "https://ok/2"}, {"url": "https://ok/3"}

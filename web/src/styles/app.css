@@ -55,3 +55,52 @@
     color: var(--color-accent);
   }
 }
+
+/* Scrollbars: in the base layer, so a utility such as [scrollbar-width:none]
+   still wins (unlayered rules beat every layer). */
+@layer base {
+  /* Scrollbars: thin, transparent track, thumb from the text colour. Native
+     scrolling untouched; Safari keeps its own overlay scrollbars. */
+  :root {
+    --scrollbar-thumb: color-mix(in oklch, var(--color-fg) 22%, transparent);
+    --scrollbar-thumb-hover: color-mix(in oklch, var(--color-fg) 45%, transparent);
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  
+  * {
+    scrollbar-width: thin;
+  }
+  
+  /* Old Chromium only (no scrollbar-color). */
+  @supports not ((scrollbar-color: auto) or (font: -apple-system-body)) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+      background: transparent;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: 999px;
+      background: var(--scrollbar-thumb) padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-thumb-hover);
+    }
+  }
+  
+  @media (prefers-contrast: more) {
+    :root {
+      --scrollbar-thumb: color-mix(in oklch, var(--color-fg) 55%, transparent);
+    }
+  }
+  
+  @media (forced-colors: active) {
+    :root {
+      scrollbar-color: auto;
+    }
+  }
+}

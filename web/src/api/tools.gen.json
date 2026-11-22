@@ -47,7 +47,7 @@
         },
         "format": {
           "default": "mp4",
-          "description": "Output format: mp4, mkv or mov for video; mp3, m4a, opus, flac or wav for audio only.",
+          "description": "Output format: mp4, mkv or mov for video; mp3, m4a, opus, flac or wav for audio only; original keeps the source's audio without re-encoding. Music links (Spotify, Deezer, Apple Music) are audio only.",
           "enum": [
             "mp4",
             "mkv",
@@ -56,7 +56,8 @@
             "m4a",
             "opus",
             "flac",
-            "wav"
+            "wav",
+            "original"
           ],
           "type": "string"
         },

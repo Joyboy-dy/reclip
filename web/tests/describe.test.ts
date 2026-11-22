@@ -13,6 +13,7 @@ const info = {
     { id: "137", label: "1080p", height: 1080, codec: null },
     { id: "313", label: "2160p VP9", height: 2160, codec: "VP9" },
   ],
+  audio_only: false,
 };
 const card = (over: Partial<Card>): Card => ({ key: "k", url: "https://www.youtube.com/watch?v=a", status: "ready", ...over });
 
@@ -33,6 +34,12 @@ test("desktop meta lines follow the mockup", () => {
   expect(cardMeta(running)).toBe("YouTube · MKV · clip 0:05 to 0:30");
   expect(formatLabel(card({ info, format: "mov", selectedFormat: "313" }))).toBe("MOV 2160p VP9");
   expect(formatLabel(card({ info, format: "m4a", selectedFormat: "137" }))).toBe("M4A");
+});
+
+test("a music track names its platform", () => {
+  const track = { title: "Love Me Do", thumbnail: null, duration: 140, uploader: "The Beatles", formats: [], audio_only: true, matched_from: "Apple Music" };
+  expect(cardMeta(card({ info: track }))).toBe("The Beatles · 2:20 · Apple Music");
+  expect(cardMeta(card({ info: track, status: "done", format: "original" }))).toBe("The Beatles · 2:20 · Apple Music · ORIGINAL");
 });
 
 test("phone meta lines are shorter", () => {

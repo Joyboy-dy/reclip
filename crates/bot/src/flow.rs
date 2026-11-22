@@ -102,6 +102,8 @@ async fn on_link<T: Telegram + 'static, C: Core + 'static>(
             return;
         }
     };
+    // A music track (Spotify, SoundCloud...) has no video to choose.
+    let mode = if info.audio_only { Mode::Mp3 } else { mode };
     let choice = Choice {
         user_id: user,
         url,

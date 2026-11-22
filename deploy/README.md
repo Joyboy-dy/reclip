@@ -58,7 +58,15 @@ Le service `warp` (profil `warp`) fait sortir le trafic de yt-dlp par le réseau
 
 Gardez `http://` et pas `socks5://` : ffmpeg, qui découpe les extraits (Clip) et certains flux, ne sait pas passer par un proxy SOCKS. Avec `socks5://`, il sort par l'IP du serveur et YouTube répond 403 (« ffmpeg exited with code 8 »).
 
-YouTube peut aussi bloquer certaines adresses de WARP. Dans ce cas, redémarrez le conteneur `warp` (il obtient souvent une autre adresse), ou passez aux cookies. Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
+YouTube peut aussi bloquer certaines adresses de WARP. ReClip s'en occupe tout seul :
+
+1. Quand YouTube répond « not a bot », le cœur dépose un fichier `rotate` dans le volume `warp-signal`, partagé avec le conteneur `warp`.
+2. Le contrôle de santé de `warp` (toutes les 10 s) voit ce fichier et arrête le proxy. Le conteneur s'arrête et Docker le relance (`restart: unless-stopped`), ce qui donne en général une autre adresse Cloudflare. C'est le redémarrage manuel, sans accès au socket Docker.
+3. Une fois WARP reconnecté (fichier `alive` réécrit, 10 à 25 s en tout), le cœur réessaie une fois l'analyse ou le téléchargement. Les téléchargements coupés par le redémarrage reprennent aussi une fois, à partir de la partie déjà téléchargée.
+
+Au plus une rotation toutes les 2 minutes : si la nouvelle adresse est bloquée elle aussi, l'erreur s'affiche comme avant. Passez alors aux cookies. `RECLIP_WARP_SIGNAL_DIR` vide désactive la rotation. Sans le profil `warp`, elle ne fait rien (aucun conteneur ne répond dans le dossier). Les logs du cœur montrent `asking WARP for a new exit`, puis `new WARP exit ready`.
+
+Pour revenir en arrière, retirez `warp` des profils et `RECLIP_PROXY`, puis redéployez.
 
 ### Cookies YouTube
 
@@ -100,6 +108,21 @@ La page d'administration est sur `/admin`. Elle n'est liée nulle part sur le si
 3. Une fois chaque administrateur connecté, retirez `RECLIP_ADMIN_DEFAULT_PASSWORD` de Dokploy ou de `deploy/.env` et redéployez. Ne le versionnez jamais dans Git.
 
 Le jeton admin (`RECLIP_ADMIN_TOKEN`) et la commande `reclip-core keys` restent valables pour les scripts : la page admin ne les remplace pas.
+
+### Utilisateurs et blocage
+
+La page **Users** liste qui utilise ReClip : chaque navigateur (reconnu par son cookie), chaque compte Telegram (avec son `@username` et son nom, transmis par le bot) et chaque clé API. Pour chacun, elle affiche les adresses IP vues, le nombre de téléchargements (24 h, 7 jours, toute la période), le volume et la dernière activité.
+
+- **Signes de partage du lien** : un navigateur vu depuis 5 adresses ou plus en 24 h (« Many addresses »), une adresse utilisée par 4 navigateurs ou plus en 7 jours (« Shared address »), et une vague de nouveaux navigateurs (10 ou plus en une heure). Ce sont des indices, pas des preuves : un foyer, un bureau ou un réseau mobile partagent souvent une adresse.
+- **Bloquer** un navigateur, un compte Telegram, une clé, une adresse ou une plage (`203.0.113.0/24`, au moins /16 en IPv4 et /32 en IPv6). Les nouvelles analyses et les nouveaux téléchargements sont refusés avec un message clair (code `blocked`), sur le site comme dans le bot. Le motif n'est visible que des administrateurs. Les téléchargements déjà lancés se terminent.
+- Sur le web, on ne connaît pas le nom d'une personne : un navigateur dont on efface les cookies devient un nouvel utilisateur, et une même personne peut changer d'adresse (réseau mobile). Pour bloquer quelqu'un durablement, bloquez aussi son adresse ou sa plage.
+- Une adresse IPv6 est regroupée par /64, la plage qu'un appareil utilise en entier.
+
+Les adresses et l'activité sont conservées `RECLIP_HISTORY_DAYS` jours (30 par défaut), puis supprimées par le nettoyage automatique. Les blocages restent jusqu'à ce qu'un administrateur les lève.
+
+### Serveur
+
+La page **Server** montre la charge du conteneur (processeur, mémoire, réseau, lus dans le cgroup et `/proc`), la place prise par les fichiers en attente, les tâches en cours et en file, et le coût moyen d'un téléchargement (durée, temps processeur, taille). Elle se rafraîchit toutes les 5 s tant que l'onglet est ouvert. Rien n'est mesuré en arrière-plan quand personne ne la regarde.
 
 ## Serveur MCP et WebMCP
 

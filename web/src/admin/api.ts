@@ -1,13 +1,17 @@
 import { ApiFailure } from "@/api/client";
 import type {
+  ActivityReport,
   AdminLogin,
   AdminMe,
   AdminPasswordChange,
   ApiKeyInfo,
   ApiKeyList,
+  BlockInfo,
+  CreateBlockRequest,
   CreateKeyRequest,
   CreatedKey,
   ErrorCode,
+  ServerStats,
 } from "@/api/types.gen";
 
 const BASE = "/api/v1/admin";
@@ -58,6 +62,11 @@ export const listKeys = async (): Promise<ApiKeyInfo[]> => (await json<ApiKeyLis
 export const createKey = (req: CreateKeyRequest): Promise<CreatedKey> => json("/keys", "POST", req);
 export const revokeKey = async (id: string): Promise<void> =>
   void (await send(`/keys/${encodeURIComponent(id)}`, "DELETE"));
+export const getActivity = (): Promise<ActivityReport> => json("/activity", "GET");
+export const createBlock = (req: CreateBlockRequest): Promise<BlockInfo> => json("/blocks", "POST", req);
+export const listBlocks = async (): Promise<BlockInfo[]> => (await json<{ blocks: BlockInfo[] }>("/blocks", "GET")).blocks;
+export const removeBlock = async (id: number): Promise<void> => void (await send(`/blocks/${id}`, "DELETE"));
+export const getServer = (): Promise<ServerStats> => json("/server", "GET");
 
 /** Message to show for a failed admin call. Wrong credentials and network failures get fixed copy. */
 export function adminErrorText(err: unknown, unauthorized = SESSION_EXPIRED): string {

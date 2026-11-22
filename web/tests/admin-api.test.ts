@@ -54,10 +54,13 @@ test("parseRoute / routePath", () => {
   expect(parseRoute("/admin/keys")).toBe("keys");
   expect(parseRoute("/admin/keys/")).toBe("keys");
   expect(parseRoute("/admin/password")).toBe("password");
+  expect(parseRoute("/admin/users")).toBe("users");
+  expect(parseRoute("/admin/server/")).toBe("server");
   expect(parseRoute("/admin/unknown")).toBe("home");
   expect(routePath("home")).toBe("/admin");
   expect(routePath("keys")).toBe("/admin/keys");
   expect(routePath("password")).toBe("/admin/password");
+  expect(routePath("users")).toBe("/admin/users");
 });
 
 test("capitalize", () => {

@@ -48,6 +48,7 @@ Settings are environment variables. Copy [deploy/.env.example](deploy/.env.examp
 | `RECLIP_YTDLP_BIN` | yt-dlp binary to run. | `yt-dlp` |
 | `RECLIP_COOKIES` | Path to a Netscape `cookies.txt`, passed to yt-dlp. Required for YouTube on most servers. | none |
 | `RECLIP_PROXY` | Proxy for every yt-dlp call, e.g. `socks5://127.0.0.1:7897`. With the `warp` compose profile, `http://warp:1080` sends downloads through Cloudflare WARP (helps when YouTube blocks the server). Prefer an `http://` proxy: ffmpeg, which cuts clips, cannot use SOCKS and would go out directly. | none |
+| `RECLIP_WARP_SIGNAL_DIR` | Folder shared with the `warp` container. On a YouTube bot check, the core asks there for a new Cloudflare exit (the container restarts) and retries once. Empty disables it. | `/run/warp-signal` (compose) |
 | `RECLIP_JS_RUNTIME` | Force the JS runtime for YouTube challenges (`deno`, `bun`, `node`, `quickjs`, or `name:/path`). Detected automatically otherwise. | auto |
 | `RECLIP_JOB_TIMEOUT` | Maximum duration of a job, in seconds. | `1800` |
 | `RECLIP_PLAYLIST_LIMIT` | Maximum number of videos taken from a playlist. | `50` |
@@ -78,11 +79,11 @@ The downloads directory belongs to ReClip: at startup it deletes the job folders
 
 ### Admin page
 
-Admins sign in at `/admin`. The page is not linked from the site, so share the address only with admins. Set `RECLIP_ADMIN_EMAILS` and `RECLIP_ADMIN_DEFAULT_PASSWORD`: each admin signs in once with the default password and is then asked to choose their own. The admin token and the `reclip-core keys` CLI keep working for scripts. Details (in French) in [deploy/README.md](deploy/README.md).
+Admins sign in at `/admin`. The page is not linked from the site, so share the address only with admins. Set `RECLIP_ADMIN_EMAILS` and `RECLIP_ADMIN_DEFAULT_PASSWORD`: each admin signs in once with the default password and is then asked to choose their own. The admin token and the `reclip-core keys` CLI keep working for scripts. The **Users** page lists every browser, Telegram account and API key with its addresses and downloads, flags signs of a shared link, and blocks a user, an address or a range; **Server** shows the container's load and the average cost of a download. Activity and addresses are deleted after `RECLIP_HISTORY_DAYS`. Details (in French) in [deploy/README.md](deploy/README.md).
 
 ### YouTube on a server
 
-YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. The simplest fix needs no account: start the `warp` compose profile and set `RECLIP_PROXY=http://warp:1080`, so yt-dlp goes out through Cloudflare WARP (e.g. `COMPOSE_PROFILES=telegram,warp`). If YouTube blocks that too, use cookies:
+YouTube refuses most datacenter IPs with *"Sign in to confirm you're not a bot"*. The simplest fix needs no account: start the `warp` compose profile and set `RECLIP_PROXY=http://warp:1080`, so yt-dlp goes out through Cloudflare WARP (e.g. `COMPOSE_PROFILES=telegram,warp`). When YouTube blocks the WARP address, ReClip restarts the `warp` container for a new one and retries once (at most every 2 minutes; see `deploy/README.md`). If YouTube blocks that too, use cookies:
 
 1. Use a secondary Google account: accounts used with yt-dlp can get flagged.
 2. In a private browser window, log in to YouTube, export the cookies with an extension such as *Get cookies.txt LOCALLY*, then close the window without browsing further (YouTube rotates the cookies of open sessions).
@@ -164,6 +165,7 @@ Errors:
 | 401 | `unauthorized` | Invalid, expired or revoked key; no key in private mode; wrong admin token on the admin API. |
 | 403 | `forbidden` | The key lacks the scope, the key cannot act for users (no `delegate`), or a request without a key came with a cross-site or missing `Origin`. |
 | 403 | `forbidden_target` | The URL points to a private or internal address. |
+| 403 | `blocked` | An admin blocked this browser, Telegram account, key or address (`/admin/users`). |
 | 429 | `rate_limited` | Over a limit. `Retry-After` gives the wait in seconds. |
 
 Responses also carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets).
@@ -235,6 +237,13 @@ cd web && bun test
 Anything [yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md), including:
 
 YouTube, TikTok, Instagram, Twitter/X, Reddit, Facebook, Vimeo, Twitch, Dailymotion, SoundCloud, Loom, Streamable, Pinterest, Tumblr, Threads, LinkedIn, and many more.
+
+### Music
+
+- **SoundCloud, Bandcamp, YouTube Music**: the platform's own audio. Tracks, sets, albums and playlists; SoundCloud Go+ tracks (30 s preview only) are refused.
+- **Spotify, Deezer, Apple Music**: their audio is encrypted, so ReClip reads the public metadata (no account, cookie or API key), downloads the matching YouTube upload (duration within 3 s, official uploads first, no live, cover or remix unless the track is one) and writes the platform's title, artists, album and cover into the file. The audio quality is YouTube's (about 130 to 160 kbps), whatever the platform offers. Apple Music playlists are not public and are refused.
+
+Audio files carry their tags and cover art unless **Remove metadata** is checked. The **Original** audio format keeps the source's stream without re-encoding (`.opus`, `.m4a`, `.mp3`).
 
 ## Stack
 

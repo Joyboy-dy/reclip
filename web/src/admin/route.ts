@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type Route = "home" | "keys" | "password";
+export type Route = "home" | "users" | "server" | "keys" | "password";
+
+const PAGES: Exclude<Route, "home">[] = ["users", "server", "keys", "password"];
 
 /** Maps a pathname to a page; unknown paths under /admin fall back to home. */
 export function parseRoute(pathname: string): Route {
   const path = pathname.replace(/\/+$/, "");
-  if (path === "/admin/keys") return "keys";
-  if (path === "/admin/password") return "password";
-  return "home";
+  return PAGES.find((p) => path === `/admin/${p}`) ?? "home";
 }
 
-export const routePath = (route: Route): string =>
-  route === "keys" ? "/admin/keys" : route === "password" ? "/admin/password" : "/admin";
+export const routePath = (route: Route): string => (route === "home" ? "/admin" : `/admin/${route}`);
 
 /** History-API router: current route plus navigate/replace helpers. No dependency. */
 export function useRoute(): { route: Route; go: (r: Route) => void; replace: (r: Route) => void } {

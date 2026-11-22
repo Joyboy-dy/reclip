@@ -59,6 +59,11 @@ pub async fn sweep(manager: &JobManager) -> anyhow::Result<()> {
     if !purged.is_empty() {
         tracing::info!(purged = purged.len(), "purged expired jobs");
     }
+    // Addresses are personal data: kept no longer than the history.
+    let forgotten = store.purge_activity(&crate::store::now_minus(keep)).await?;
+    if forgotten > 0 {
+        tracing::info!(rows = forgotten, "purged old activity");
+    }
     manager.refresh_disk().await;
     manager.schedule();
     Ok(())

@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use reclip_shared::{ApiKeyInfo, ErrorCode, Scope};
 
 use super::cookie;
+use super::device::Origin;
 use super::ip::Forwarded;
 use super::request::{bearer_key, no_store, request_origin};
 use crate::app::AppState;
@@ -41,6 +42,8 @@ pub struct Caller {
     pub limits: Option<Limits>,
     /// The API key used, also for delegated calls.
     pub key_id: Option<String>,
+    /// Address, device and Telegram profile, for the admin's activity view.
+    pub origin: Origin,
 }
 
 impl Caller {
@@ -134,12 +137,20 @@ async fn resolve(
     if let Some(auth) = headers.get(AUTHORIZATION).filter(|v| is_bearer_scheme(v)) {
         let info = bearer_key(s, auth).await?;
         let caller = match headers.get(ON_BEHALF_OF) {
-            None => key_caller(&s.cfg, info),
-            Some(who) => delegated_caller(&s.cfg, info, who).map_err(|e| e.into_response())?,
+            None => Caller {
+                origin: Origin::direct(fwd.client_ip, headers),
+                ..key_caller(&s.cfg, info)
+            },
+            Some(who) => Caller {
+                origin: Origin::telegram(headers),
+                ..delegated_caller(&s.cfg, info, who).map_err(|e| e.into_response())?
+            },
         };
         return Ok((caller, None));
     }
-    cookie::visitor_caller(s, parts, fwd).map_err(|r| *r)
+    let (caller, minted) = cookie::visitor_caller(s, parts, fwd).map_err(|r| *r)?;
+    let origin = Origin::direct(fwd.client_ip, headers);
+    Ok((Caller { origin, ..caller }, minted))
 }
 
 /// Whether the credential's scheme is `Bearer` (case-insensitive), whatever
@@ -179,6 +190,7 @@ pub(crate) fn key_caller(cfg: &Config, info: ApiKeyInfo) -> Caller {
         limits: key_limits(cfg, &info),
         scopes: info.scopes,
         key_id: Some(info.id),
+        origin: Origin::default(),
     }
 }
 
@@ -211,6 +223,7 @@ fn delegated_caller(
             .collect(),
         limits: Some(cfg.limits.tg),
         key_id: Some(info.id),
+        origin: Origin::default(),
     })
 }
 

@@ -53,6 +53,9 @@ pub async fn resume(
     caller
         .require(Scope::JobsCreate)
         .map_err(IntoResponse::into_response)?;
+    s.blocks
+        .check(&caller)
+        .map_err(|e| HttpError(e).into_response())?;
     let conflict = || (StatusCode::CONFLICT, Json(not_resumable())).into_response();
     let job = s
         .jobs

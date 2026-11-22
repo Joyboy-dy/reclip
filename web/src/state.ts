@@ -12,9 +12,35 @@ import type {
 } from "./api/types.gen";
 
 export const VIDEO_FORMATS = ["mp4", "mkv", "mov"] as const satisfies readonly MediaFormat[];
-export const AUDIO_FORMATS = ["mp3", "m4a", "opus", "flac", "wav"] as const satisfies readonly MediaFormat[];
+export const AUDIO_FORMATS = ["mp3", "m4a", "opus", "flac", "wav", "original"] as const satisfies readonly MediaFormat[];
 export type VideoFormat = (typeof VIDEO_FORMATS)[number];
 export type AudioFormat = (typeof AUDIO_FORMATS)[number];
+export const AUDIO_LABELS: Record<AudioFormat, string> = { mp3: "MP3", m4a: "M4A", opus: "Opus", flac: "FLAC", wav: "WAV", original: "Original" };
+/** Audio formats shown as segments; the others sit behind "More". */
+export const AUDIO_MAIN = ["mp3", "m4a"] as const satisfies readonly AudioFormat[];
+export const AUDIO_MORE = ["opus", "flac", "wav", "original"] as const satisfies readonly AudioFormat[];
+export const FORMAT_LABELS: Record<MediaFormat, string> = { mp4: "MP4", mkv: "MKV", mov: "MOV", ...AUDIO_LABELS };
+/** One-line hints of the format menus. */
+export const FORMAT_HINTS: Record<MediaFormat, string> = {
+  mp4: "plays everywhere",
+  mkv: "keeps every stream",
+  mov: "Apple editing apps",
+  mp3: "plays everywhere",
+  m4a: "AAC, Apple devices",
+  opus: "smallest files",
+  flac: "lossless container",
+  wav: "uncompressed",
+  original: "no re-encoding",
+};
+/**
+ * The format a card downloads in: its own pick, else the page's choice. A
+ * music track has no video, so it takes the page's audio format.
+ */
+export function cardFormat(c: Card, o: { media: string; container: VideoFormat; audio: AudioFormat }): MediaFormat {
+  if (c.pick) return c.pick;
+  return o.media === "video" && !c.info?.audio_only ? o.container : o.audio;
+}
+
 export const isVideo = (f: MediaFormat): f is VideoFormat => (VIDEO_FORMATS as readonly string[]).includes(f);
 
 export type Card = {
@@ -32,6 +58,8 @@ export type Card = {
   title?: string;
   thumbnail?: string;
   format?: MediaFormat;
+  /** Format picked on this card before its download; else the page's. */
+  pick?: MediaFormat;
   clip?: Clip;
   strip?: boolean;
   resumable?: boolean;

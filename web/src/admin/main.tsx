@@ -9,7 +9,9 @@ import { FirstLoginPage, LoginPage } from "./auth";
 import { useLayout } from "./breakpoint";
 import { KeysPage } from "./keys-page";
 import { PasswordPage } from "./password-page";
-import { useRoute } from "./route";
+import { type Route, useRoute } from "./route";
+import { ServerPage } from "./server-page";
+import { UsersPage } from "./users-page";
 import { Shell } from "./shell";
 
 // Must run before the first render so Radix style tags carry the CSP nonce.
@@ -36,10 +38,10 @@ function App() {
   // Any 401 from an admin call means the session is gone: back to sign-in with a notice.
   const expired = useCallback(() => setSession({ status: "anonymous", notice: SESSION_EXPIRED }), []);
 
-  // "/admin" is only an entry point: signed-in users land on the key list.
+  // "/admin" is only an entry point: signed-in users land on the users page.
   const signedIn = session.status === "in" && !session.me.must_change_password;
   useEffect(() => {
-    if (signedIn && route === "home") replace("keys");
+    if (signedIn && route === "home") replace("users");
   }, [signedIn, route, replace]);
 
   async function signOut() {
@@ -61,7 +63,7 @@ function App() {
         onSignedIn={(me, password) => {
           // Keep the password only while it is needed for the forced first change.
           setSession({ status: "in", me, signInPassword: me.must_change_password ? password : "" });
-          if (!me.must_change_password) go("keys");
+          if (!me.must_change_password) go("users");
         }}
       />
     );
@@ -76,16 +78,22 @@ function App() {
         onUnauthorized={expired}
         onDone={() => {
           setSession({ status: "in", me: { ...me, must_change_password: false }, signInPassword: "" });
-          go("keys");
+          go("users");
         }}
       />
     );
   }
 
-  const page = route === "password" ? "password" : "keys";
+  const page: Exclude<Route, "home"> = route === "home" ? "users" : route;
+  const content = {
+    users: <UsersPage layout={layout} onUnauthorized={expired} />,
+    server: <ServerPage layout={layout} onUnauthorized={expired} />,
+    keys: <KeysPage layout={layout} onUnauthorized={expired} />,
+    password: <PasswordPage onUnauthorized={expired} />,
+  }[page];
   return (
     <Shell layout={layout} route={page} email={me.email} go={go} onSignOut={signOut}>
-      {page === "password" ? <PasswordPage onUnauthorized={expired} /> : <KeysPage layout={layout} onUnauthorized={expired} />}
+      {content}
     </Shell>
   );
 }
